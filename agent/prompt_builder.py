@@ -580,6 +580,20 @@ def build_skills_system_prompt(
             return cached
 
     disabled = get_disabled_skill_names()
+    active_profession_slug = ""
+    active_profession_skills: set[str] = set()
+    active_profession_name = ""
+    try:
+        from tools.professions_tool import get_active_profession_slug, get_profession
+
+        active_profession_slug = get_active_profession_slug()
+        if active_profession_slug:
+            active_profession = get_profession(active_profession_slug)
+            if active_profession:
+                active_profession_name = active_profession.get("profession") or active_profession_slug
+                active_profession_skills = set(active_profession.get("skills") or [])
+    except Exception:
+        pass
 
     # ── Layer 2: disk snapshot ────────────────────────────────────────
     snapshot = _load_skills_snapshot(skills_dir)
@@ -710,6 +724,14 @@ def build_skills_system_prompt(
         result = ""
     else:
         index_lines = []
+        if active_profession_slug:
+            if active_profession_skills:
+                index_lines.append(
+                    f"  active_profession: {active_profession_name} "
+                    f"(prioritize these skills first: {', '.join(sorted(active_profession_skills))})"
+                )
+            else:
+                index_lines.append(f"  active_profession: {active_profession_name}")
         for category in sorted(skills_by_category.keys()):
             cat_desc = category_descriptions.get(category, "")
             if cat_desc:
@@ -718,14 +740,20 @@ def build_skills_system_prompt(
                 index_lines.append(f"  {category}:")
             # Deduplicate and sort skills within each category
             seen = set()
-            for name, desc in sorted(skills_by_category[category], key=lambda x: x[0]):
+            sorted_skills = sorted(
+                skills_by_category[category],
+                key=lambda x: (0 if x[0] in active_profession_skills else 1, x[0]),
+            )
+            for name, desc in sorted_skills:
                 if name in seen:
                     continue
                 seen.add(name)
                 if desc:
-                    index_lines.append(f"    - {name}: {desc}")
+                    prefix = "* " if name in active_profession_skills else "- "
+                    index_lines.append(f"    {prefix}{name}: {desc}")
                 else:
-                    index_lines.append(f"    - {name}")
+                    prefix = "* " if name in active_profession_skills else "- "
+                    index_lines.append(f"    {prefix}{name}")
 
         result = (
             "## Skills (mandatory)\n"

@@ -57,6 +57,7 @@ _CLONE_CONFIG_FILES = [
 _CLONE_SUBDIR_FILES = [
     "memories/MEMORY.md",
     "memories/USER.md",
+    "memories/PROFESSIONS.md",
 ]
 
 # Runtime files stripped after --clone-all (shouldn't carry over)

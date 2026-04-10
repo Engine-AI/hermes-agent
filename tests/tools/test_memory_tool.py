@@ -110,6 +110,11 @@ class TestMemoryStoreAdd:
         assert result["success"] is True
         assert result["target"] == "user"
 
+    def test_add_to_profession(self, store):
+        result = store.add("profession", "Profession: accountant\nSkills: tax-filing, reconciliation")
+        assert result["success"] is True
+        assert result["target"] == "profession"
+
     def test_add_empty_rejected(self, store):
         result = store.add("memory", "  ")
         assert result["success"] is False
@@ -193,11 +198,13 @@ class TestMemoryStorePersistence:
         store1.load_from_disk()
         store1.add("memory", "persistent fact")
         store1.add("user", "Alice, developer")
+        store1.add("profession", "Profession: accountant")
 
         store2 = MemoryStore()
         store2.load_from_disk()
         assert "persistent fact" in store2.memory_entries
         assert "Alice, developer" in store2.user_entries
+        assert "Profession: accountant" in store2.profession_entries
 
     def test_deduplication_on_load(self, tmp_path, monkeypatch):
         monkeypatch.setattr("tools.memory_tool.MEMORY_DIR", tmp_path)
@@ -228,6 +235,14 @@ class TestMemoryStoreSnapshot:
     def test_empty_snapshot_returns_none(self, store):
         assert store.format_for_system_prompt("memory") is None
 
+    def test_profession_snapshot_header(self, store):
+        store.add("profession", "Profession: accountant")
+        store.load_from_disk()
+        snapshot = store.format_for_system_prompt("profession")
+        assert isinstance(snapshot, str)
+        assert "PROFESSIONS" in snapshot
+        assert "Profession: accountant" in snapshot
+
 
 # =========================================================================
 # memory_tool() dispatcher
@@ -249,6 +264,12 @@ class TestMemoryToolDispatcher:
 
     def test_add_via_tool(self, store):
         result = json.loads(memory_tool(action="add", target="memory", content="via tool", store=store))
+        assert result["success"] is True
+
+    def test_add_profession_via_tool(self, store):
+        result = json.loads(
+            memory_tool(action="add", target="profession", content="Profession: accountant", store=store)
+        )
         assert result["success"] is True
 
     def test_replace_requires_old_text(self, store):

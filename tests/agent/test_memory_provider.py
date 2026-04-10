@@ -412,10 +412,12 @@ class TestBuiltinMemoryProvider:
             memory_store=store,
             memory_enabled=True,
             user_profile_enabled=True,
+            profession_profile_enabled=True,
         )
         block = p.system_prompt_block()
         assert "BLOCK_memory" in block
         assert "BLOCK_user" in block
+        assert "BLOCK_profession" in block
 
     def test_system_prompt_memory_disabled(self):
         store = MagicMock()

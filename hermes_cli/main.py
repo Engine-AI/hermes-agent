@@ -4901,6 +4901,54 @@ For more help on a command:
     skills_parser.set_defaults(func=cmd_skills)
 
     # =========================================================================
+    # professions command
+    # =========================================================================
+    professions_parser = subparsers.add_parser(
+        "professions",
+        help="Inspect and rebuild profession definitions from PROFESSIONS.md",
+        description="Manage profession definitions stored in ~/.hermes/memories/PROFESSIONS.md.",
+    )
+    professions_sub = professions_parser.add_subparsers(dest="professions_action")
+    professions_sub.add_parser("list", help="List professions as a simple leaderboard")
+    prof_show = professions_sub.add_parser("show", help="Show one profession")
+    prof_show.add_argument("name", help="Profession name or slug")
+    prof_use = professions_sub.add_parser("use", help="Set the active profession")
+    prof_use.add_argument("name", help="Profession name or slug")
+    prof_rate = professions_sub.add_parser("rate", help="Rate a profession")
+    prof_rate.add_argument("name", help="Profession name or slug")
+    prof_rate.add_argument("stars", type=int, help="Star rating 1-5")
+    prof_rate.add_argument("--review", default="", help="Optional review text")
+    prof_feedback = professions_sub.add_parser("feedback", help="Record profession feedback")
+    prof_feedback.add_argument("name", help="Profession name or slug")
+    prof_feedback.add_argument("sentiment", choices=["positive", "negative"], help="Feedback sentiment")
+    prof_feedback.add_argument("text", help="Feedback text")
+    prof_solve = professions_sub.add_parser("solve", help="Record a solved problem for a profession")
+    prof_solve.add_argument("name", help="Profession name or slug")
+    prof_solve.add_argument("--problem", required=True, help="Problem that was solved")
+    prof_solve.add_argument("--user", default="", help="Optional user identifier or name")
+    prof_solve.add_argument("--summary", default="", help="Optional short solution summary shown in recent history")
+    prof_solve.add_argument(
+        "--no-user-count",
+        action="store_true",
+        help="Do not increment the users-helped counter for this record",
+    )
+    prof_bind = professions_sub.add_parser("bind", help="Manually bind a skill to a profession")
+    prof_bind.add_argument("name", help="Profession name or slug")
+    prof_bind.add_argument("skill", help="Skill name")
+    prof_unbind = professions_sub.add_parser("unbind", help="Manually unbind a skill from a profession")
+    prof_unbind.add_argument("name", help="Profession name or slug")
+    prof_unbind.add_argument("skill", help="Skill name")
+    professions_sub.add_parser("rebuild", help="Rebuild PROFESSIONS.md from installed skills")
+    professions_sub.add_parser("path", help="Print the PROFESSIONS.md path")
+
+    def cmd_professions(args):
+        from hermes_cli.professions import professions_command
+
+        professions_command(args)
+
+    professions_parser.set_defaults(func=cmd_professions)
+
+    # =========================================================================
     # plugins command
     # =========================================================================
     plugins_parser = subparsers.add_parser(

@@ -1,4 +1,4 @@
-"""BuiltinMemoryProvider — wraps MEMORY.md / USER.md as a MemoryProvider.
+"""BuiltinMemoryProvider — wraps MEMORY.md / USER.md / PROFESSIONS.md as a MemoryProvider.
 
 Always registered as the first provider. Cannot be disabled or removed.
 This is the existing Hermes memory system exposed through the provider
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class BuiltinMemoryProvider(MemoryProvider):
-    """Built-in file-backed memory (MEMORY.md + USER.md).
+    """Built-in file-backed memory (MEMORY.md + USER.md + PROFESSIONS.md).
 
     Always active, never disabled by other providers. The `memory` tool
     is handled by run_agent.py's agent-level tool interception (not through
@@ -35,10 +35,12 @@ class BuiltinMemoryProvider(MemoryProvider):
         memory_store=None,
         memory_enabled: bool = False,
         user_profile_enabled: bool = False,
+        profession_profile_enabled: bool = False,
     ):
         self._store = memory_store
         self._memory_enabled = memory_enabled
         self._user_profile_enabled = user_profile_enabled
+        self._profession_profile_enabled = profession_profile_enabled
 
     @property
     def name(self) -> str:
@@ -54,7 +56,7 @@ class BuiltinMemoryProvider(MemoryProvider):
             self._store.load_from_disk()
 
     def system_prompt_block(self) -> str:
-        """Return MEMORY.md and USER.md content for the system prompt.
+        """Return MEMORY.md, USER.md, and PROFESSIONS.md content for the system prompt.
 
         Uses the frozen snapshot captured at load time. This ensures the
         system prompt stays stable throughout a session (preserving the
@@ -72,6 +74,10 @@ class BuiltinMemoryProvider(MemoryProvider):
             user_block = self._store.format_for_system_prompt("user")
             if user_block:
                 parts.append(user_block)
+        if self._profession_profile_enabled:
+            profession_block = self._store.format_active_profession_for_system_prompt()
+            if profession_block:
+                parts.append(profession_block)
 
         return "\n\n".join(parts)
 
@@ -112,3 +118,7 @@ class BuiltinMemoryProvider(MemoryProvider):
     @property
     def user_profile_enabled(self) -> bool:
         return self._user_profile_enabled
+
+    @property
+    def profession_profile_enabled(self) -> bool:
+        return self._profession_profile_enabled

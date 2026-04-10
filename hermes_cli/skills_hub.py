@@ -433,6 +433,14 @@ def do_install(identifier: str, category: str = "", force: bool = False,
     from tools.skills_hub import SKILLS_DIR
     c.print(f"[bold green]Installed:[/] {install_dir.relative_to(SKILLS_DIR)}")
     c.print(f"[dim]Files: {', '.join(bundle.files.keys())}[/]\n")
+    try:
+        from tools.professions_tool import bind_skill_to_professions
+
+        bound = bind_skill_to_professions(install_dir)
+        if bound:
+            c.print(f"[dim]Bound to professions: {', '.join(bound)}[/]\n")
+    except Exception as e:
+        c.print(f"[yellow]Profession binding skipped:[/] {e}\n")
 
     if invalidate_cache:
         # Invalidate the skills prompt cache so the new skill appears immediately

@@ -494,8 +494,10 @@ DEFAULT_CONFIG = {
     "memory": {
         "memory_enabled": True,
         "user_profile_enabled": True,
+        "profession_profile_enabled": True,
         "memory_char_limit": 2200,   # ~800 tokens at 2.75 chars/token
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
+        "profession_char_limit": 5000,  # profession definitions, skill bindings, feedback summaries
         # External memory provider plugin (empty = built-in only).
         # Set to a provider name to activate: "openviking", "mem0",
         # "hindsight", "holographic", "retaindb", "byterover".
@@ -526,6 +528,10 @@ DEFAULT_CONFIG = {
     # always goes to ~/.hermes/skills/.
     "skills": {
         "external_dirs": [],   # e.g. ["~/.agents/skills", "/shared/team-skills"]
+    },
+
+    "professions": {
+        "active": "",  # slug of the currently preferred profession
     },
 
     # Honcho AI-native memory -- reads ~/.honcho/config.json as single source of truth.

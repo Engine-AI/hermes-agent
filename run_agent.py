@@ -1008,10 +1008,11 @@ class AIAgent:
         except Exception:
             _agent_cfg = {}
 
-        # Persistent memory (MEMORY.md + USER.md) -- loaded from disk
+        # Persistent memory (MEMORY.md + USER.md + PROFESSIONS.md) -- loaded from disk
         self._memory_store = None
         self._memory_enabled = False
         self._user_profile_enabled = False
+        self._profession_profile_enabled = False
         self._memory_nudge_interval = 10
         self._memory_flush_min_turns = 6
         self._turns_since_memory = 0
@@ -1021,13 +1022,15 @@ class AIAgent:
                 mem_config = _agent_cfg.get("memory", {})
                 self._memory_enabled = mem_config.get("memory_enabled", False)
                 self._user_profile_enabled = mem_config.get("user_profile_enabled", False)
+                self._profession_profile_enabled = mem_config.get("profession_profile_enabled", False)
                 self._memory_nudge_interval = int(mem_config.get("nudge_interval", 10))
                 self._memory_flush_min_turns = int(mem_config.get("flush_min_turns", 6))
-                if self._memory_enabled or self._user_profile_enabled:
+                if self._memory_enabled or self._user_profile_enabled or self._profession_profile_enabled:
                     from tools.memory_tool import MemoryStore
                     self._memory_store = MemoryStore(
                         memory_char_limit=mem_config.get("memory_char_limit", 2200),
                         user_char_limit=mem_config.get("user_char_limit", 1375),
+                        profession_char_limit=mem_config.get("profession_char_limit", 5000),
                     )
                     self._memory_store.load_from_disk()
             except Exception:
@@ -2771,6 +2774,10 @@ class AIAgent:
                 user_block = self._memory_store.format_for_system_prompt("user")
                 if user_block:
                     prompt_parts.append(user_block)
+            if self._profession_profile_enabled:
+                profession_block = self._memory_store.format_active_profession_for_system_prompt()
+                if profession_block:
+                    prompt_parts.append(profession_block)
 
         # External memory provider system prompt block (additive to built-in)
         if self._memory_manager:

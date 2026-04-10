@@ -74,6 +74,7 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
     return None
 
 import yaml
+from tools.professions_tool import bind_skill_to_professions
 
 
 # All skills live in ~/.hermes/skills/ (single source of truth)
@@ -326,6 +327,12 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
     }
     if category:
         result["category"] = category
+    try:
+        bound = bind_skill_to_professions(skill_dir)
+        if bound:
+            result["bound_professions"] = bound
+    except Exception as e:
+        logger.warning("Failed to bind professions for skill '%s': %s", name, e)
     result["hint"] = (
         "To add reference files, templates, or scripts, use "
         "skill_manage(action='write_file', name='{}', file_path='references/example.md', file_content='...')".format(name)
@@ -359,11 +366,18 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
             _atomic_write_text(skill_md, original_content)
         return {"success": False, "error": scan_error}
 
-    return {
+    result = {
         "success": True,
         "message": f"Skill '{name}' updated.",
         "path": str(existing["path"]),
     }
+    try:
+        bound = bind_skill_to_professions(existing["path"])
+        if bound:
+            result["bound_professions"] = bound
+    except Exception as e:
+        logger.warning("Failed to bind professions for skill '%s': %s", name, e)
+    return result
 
 
 def _patch_skill(

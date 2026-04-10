@@ -2,11 +2,13 @@
 """
 Memory Tool Module - Persistent Curated Memory
 
-Provides bounded, file-backed memory that persists across sessions. Two stores:
+Provides bounded, file-backed memory that persists across sessions. Three stores:
   - MEMORY.md: agent's personal notes and observations (environment facts, project
     conventions, tool quirks, things learned)
   - USER.md: what the agent knows about the user (preferences, communication style,
     expectations, workflow habits)
+  - PROFESSIONS.md: profession definitions, their bound skills, problem domains,
+    feedback summaries, and service positioning
 
 Both are injected into the system prompt as a frozen snapshot at session start.
 Mid-session writes update files on disk immediately (durable) but do NOT change
@@ -33,6 +35,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Dict, Any, List, Optional
+from tools.professions_tool import get_active_profession_slug, parse_profession_entry
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +111,24 @@ class MemoryStore:
         Tool responses always reflect this live state.
     """
 
-    def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375):
+    def __init__(
+        self,
+        memory_char_limit: int = 2200,
+        user_char_limit: int = 1375,
+        profession_char_limit: int = 5000,
+    ):
         self.memory_entries: List[str] = []
         self.user_entries: List[str] = []
+        self.profession_entries: List[str] = []
         self.memory_char_limit = memory_char_limit
         self.user_char_limit = user_char_limit
+        self.profession_char_limit = profession_char_limit
         # Frozen snapshot for system prompt -- set once at load_from_disk()
-        self._system_prompt_snapshot: Dict[str, str] = {"memory": "", "user": ""}
+        self._system_prompt_snapshot: Dict[str, str] = {
+            "memory": "",
+            "user": "",
+            "profession": "",
+        }
 
     def load_from_disk(self):
         """Load entries from MEMORY.md and USER.md, capture system prompt snapshot."""
@@ -123,15 +137,18 @@ class MemoryStore:
 
         self.memory_entries = self._read_file(mem_dir / "MEMORY.md")
         self.user_entries = self._read_file(mem_dir / "USER.md")
+        self.profession_entries = self._read_file(mem_dir / "PROFESSIONS.md")
 
         # Deduplicate entries (preserves order, keeps first occurrence)
         self.memory_entries = list(dict.fromkeys(self.memory_entries))
         self.user_entries = list(dict.fromkeys(self.user_entries))
+        self.profession_entries = list(dict.fromkeys(self.profession_entries))
 
         # Capture frozen snapshot for system prompt injection
         self._system_prompt_snapshot = {
             "memory": self._render_block("memory", self.memory_entries),
             "user": self._render_block("user", self.user_entries),
+            "profession": self._render_block("profession", self.profession_entries),
         }
 
     @staticmethod
@@ -157,6 +174,8 @@ class MemoryStore:
         mem_dir = get_memory_dir()
         if target == "user":
             return mem_dir / "USER.md"
+        if target == "profession":
+            return mem_dir / "PROFESSIONS.md"
         return mem_dir / "MEMORY.md"
 
     def _reload_target(self, target: str):
@@ -176,11 +195,15 @@ class MemoryStore:
     def _entries_for(self, target: str) -> List[str]:
         if target == "user":
             return self.user_entries
+        if target == "profession":
+            return self.profession_entries
         return self.memory_entries
 
     def _set_entries(self, target: str, entries: List[str]):
         if target == "user":
             self.user_entries = entries
+        elif target == "profession":
+            self.profession_entries = entries
         else:
             self.memory_entries = entries
 
@@ -193,6 +216,8 @@ class MemoryStore:
     def _char_limit(self, target: str) -> int:
         if target == "user":
             return self.user_char_limit
+        if target == "profession":
+            return self.profession_char_limit
         return self.memory_char_limit
 
     def add(self, target: str, content: str) -> Dict[str, Any]:
@@ -345,6 +370,23 @@ class MemoryStore:
         block = self._system_prompt_snapshot.get(target, "")
         return block if block else None
 
+    def format_active_profession_for_system_prompt(self) -> Optional[str]:
+        """Return only the active profession block when configured.
+
+        Falls back to the full frozen professions snapshot if no active
+        profession is configured or a matching entry is not found.
+        """
+        active_slug = get_active_profession_slug()
+        if not active_slug:
+            return self.format_for_system_prompt("profession")
+
+        entries = self.profession_entries or []
+        for entry in entries:
+            parsed = parse_profession_entry(entry)
+            if parsed.get("slug") == active_slug:
+                return self._render_block("profession", [entry])
+        return self.format_for_system_prompt("profession")
+
     # -- Internal helpers --
 
     def _success_response(self, target: str, message: str = None) -> Dict[str, Any]:
@@ -376,6 +418,11 @@ class MemoryStore:
 
         if target == "user":
             header = f"USER PROFILE (who the user is) [{pct}% — {current:,}/{limit:,} chars]"
+        elif target == "profession":
+            header = (
+                f"PROFESSIONS (service positioning and skill bindings) "
+                f"[{pct}% — {current:,}/{limit:,} chars]"
+            )
         else:
             header = f"MEMORY (your personal notes) [{pct}% — {current:,}/{limit:,} chars]"
 
@@ -451,8 +498,11 @@ def memory_tool(
     if store is None:
         return tool_error("Memory is not available. It may be disabled in config or this environment.", success=False)
 
-    if target not in ("memory", "user"):
-        return tool_error(f"Invalid target '{target}'. Use 'memory' or 'user'.", success=False)
+    if target not in ("memory", "user", "profession"):
+        return tool_error(
+            f"Invalid target '{target}'. Use 'memory', 'user', or 'profession'.",
+            success=False,
+        )
 
     if action == "add":
         if not content:
@@ -504,9 +554,11 @@ MEMORY_SCHEMA = {
         "state to memory; use session_search to recall those from past transcripts.\n"
         "If you've discovered a new way to do something, solved a problem that could be "
         "necessary later, save it as a skill with the skill tool.\n\n"
-        "TWO TARGETS:\n"
+        "THREE TARGETS:\n"
         "- 'user': who the user is -- name, role, preferences, communication style, pet peeves\n"
         "- 'memory': your notes -- environment facts, project conventions, tool quirks, lessons learned\n\n"
+        "- 'profession': profession definitions -- which professions exist, which skills they bind, "
+        "what problems they solve, rating/feedback summaries, and service positioning\n\n"
         "ACTIONS: add (new entry), replace (update existing -- old_text identifies it), "
         "remove (delete -- old_text identifies it).\n\n"
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state."
@@ -521,8 +573,11 @@ MEMORY_SCHEMA = {
             },
             "target": {
                 "type": "string",
-                "enum": ["memory", "user"],
-                "description": "Which memory store: 'memory' for personal notes, 'user' for user profile."
+                "enum": ["memory", "user", "profession"],
+                "description": (
+                    "Which memory store: 'memory' for personal notes, "
+                    "'user' for user profile, 'profession' for profession definitions."
+                )
             },
             "content": {
                 "type": "string",
@@ -554,7 +609,5 @@ registry.register(
     check_fn=check_memory_requirements,
     emoji="🧠",
 )
-
-
 
 

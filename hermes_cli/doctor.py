@@ -453,6 +453,7 @@ def run_doctor(args):
         check_ok(f"{_DHH}/memories/ directory exists")
         memory_file = memories_dir / "MEMORY.md"
         user_file = memories_dir / "USER.md"
+        professions_file = memories_dir / "PROFESSIONS.md"
         if memory_file.exists():
             size = len(memory_file.read_text(encoding="utf-8").strip())
             check_ok(f"MEMORY.md exists ({size} chars)")
@@ -463,6 +464,11 @@ def run_doctor(args):
             check_ok(f"USER.md exists ({size} chars)")
         else:
             check_info("USER.md not created yet (will be created when the agent first writes a memory)")
+        if professions_file.exists():
+            size = len(professions_file.read_text(encoding="utf-8").strip())
+            check_ok(f"PROFESSIONS.md exists ({size} chars)")
+        else:
+            check_info("PROFESSIONS.md not created yet (will be created when the agent first writes a profession entry)")
     else:
         check_warn(f"{_DHH}/memories/ not found", "(will be created on first use)")
         if should_fix:
