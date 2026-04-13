@@ -883,6 +883,7 @@ def select_provider_and_model(args=None):
     from hermes_cli.config import load_config, get_env_value
 
     config = load_config()
+    requested_api_mode = _normalize_saved_api_mode(getattr(args, "api_mode", "")) if args else ""
     current_model = config.get("model")
     if isinstance(current_model, dict):
         current_model = current_model.get("default", "")
@@ -989,6 +990,7 @@ def select_provider_and_model(args=None):
                 "base_url": base_url,
                 "api_key": entry.get("api_key", ""),
                 "model": saved_model,
+                "api_mode": _normalize_saved_api_mode(entry.get("api_mode")),
             }
 
     top_keys = {k for k, _ in top_providers}
@@ -1053,9 +1055,9 @@ def select_provider_and_model(args=None):
     elif selected_provider == "copilot":
         _model_flow_copilot(config, current_model)
     elif selected_provider == "custom":
-        _model_flow_custom(config)
+        _model_flow_custom(config, api_mode=requested_api_mode)
     elif selected_provider.startswith("custom:") and selected_provider in _custom_provider_map:
-        _model_flow_named_custom(config, _custom_provider_map[selected_provider])
+        _model_flow_named_custom(config, _custom_provider_map[selected_provider], api_mode=requested_api_mode)
     elif selected_provider == "remove-custom":
         _remove_custom_provider(config)
     elif selected_provider == "anthropic":
@@ -1414,7 +1416,7 @@ def _model_flow_qwen_oauth(_config, current_model=""):
 
 
 
-def _model_flow_custom(config):
+def _model_flow_custom(config, api_mode=""):
     """Custom endpoint: collect URL, API key, and model name.
 
     Automatically saves the endpoint to ``custom_providers`` in config.yaml
@@ -1519,6 +1521,8 @@ def _model_flow_custom(config):
             print(f"Invalid context length: {context_length_str} — will auto-detect.")
             context_length = None
 
+    explicit_api_mode = _normalize_saved_api_mode(api_mode)
+
     if model_name:
         _save_model_choice(model_name)
 
@@ -1532,7 +1536,11 @@ def _model_flow_custom(config):
         model["base_url"] = effective_url
         if effective_key:
             model["api_key"] = effective_key
-        model.pop("api_mode", None)  # let runtime auto-detect from URL
+        saved_api_mode = explicit_api_mode or _get_saved_custom_api_mode(cfg, effective_url)
+        if saved_api_mode:
+            model["api_mode"] = saved_api_mode
+        else:
+            model.pop("api_mode", None)  # let runtime auto-detect from URL
         save_config(cfg)
         deactivate_provider()
 
@@ -1555,15 +1563,25 @@ def _model_flow_custom(config):
         _caller_model["base_url"] = effective_url
         if effective_key:
             _caller_model["api_key"] = effective_key
-        _caller_model.pop("api_mode", None)
+        saved_api_mode = explicit_api_mode or _get_saved_custom_api_mode(load_config(), effective_url)
+        if saved_api_mode:
+            _caller_model["api_mode"] = saved_api_mode
+        else:
+            _caller_model.pop("api_mode", None)
         config["model"] = _caller_model
         print("Endpoint saved. Use `/model` in chat or `hermes model` to set a model.")
 
     # Auto-save to custom_providers so it appears in the menu next time
-    _save_custom_provider(effective_url, effective_key, model_name or "", context_length=context_length)
+    _save_custom_provider(
+        effective_url,
+        effective_key,
+        model_name or "",
+        context_length=context_length,
+        api_mode=explicit_api_mode or _get_saved_custom_api_mode(load_config(), effective_url),
+    )
 
 
-def _save_custom_provider(base_url, api_key="", model="", context_length=None):
+def _save_custom_provider(base_url, api_key="", model="", context_length=None, api_mode=""):
     """Save a custom endpoint to custom_providers in config.yaml.
 
     Deduplicates by base_url — if the URL already exists, updates the
@@ -1576,6 +1594,7 @@ def _save_custom_provider(base_url, api_key="", model="", context_length=None):
     providers = cfg.get("custom_providers") or []
     if not isinstance(providers, list):
         providers = []
+    normalized_api_mode = _normalize_saved_api_mode(api_mode)
 
     # Check if this URL is already saved — update model/context_length if so
     for entry in providers:
@@ -1590,6 +1609,9 @@ def _save_custom_provider(base_url, api_key="", model="", context_length=None):
                     models_cfg = {}
                 models_cfg[model] = {"context_length": context_length}
                 entry["models"] = models_cfg
+                changed = True
+            if normalized_api_mode and entry.get("api_mode") != normalized_api_mode:
+                entry["api_mode"] = normalized_api_mode
                 changed = True
             if changed:
                 cfg["custom_providers"] = providers
@@ -1616,6 +1638,8 @@ def _save_custom_provider(base_url, api_key="", model="", context_length=None):
         entry["api_key"] = api_key
     if model:
         entry["model"] = model
+    if normalized_api_mode:
+        entry["api_mode"] = normalized_api_mode
     if model and context_length:
         entry["models"] = {model: {"context_length": context_length}}
 
@@ -1680,7 +1704,7 @@ def _remove_custom_provider(config):
     print(f"✅ Removed \"{removed_name}\" from custom providers.")
 
 
-def _model_flow_named_custom(config, provider_info):
+def _model_flow_named_custom(config, provider_info, api_mode=""):
     """Handle a named custom provider from config.yaml custom_providers list.
 
     If the entry has a saved model name, activates it immediately.
@@ -1694,6 +1718,7 @@ def _model_flow_named_custom(config, provider_info):
     base_url = provider_info["base_url"]
     api_key = provider_info.get("api_key", "")
     saved_model = provider_info.get("model", "")
+    saved_api_mode = _normalize_saved_api_mode(api_mode) or _normalize_saved_api_mode(provider_info.get("api_mode"))
 
     # If a model is saved, just activate immediately — no probing needed
     if saved_model:
@@ -1708,6 +1733,10 @@ def _model_flow_named_custom(config, provider_info):
         model["base_url"] = base_url
         if api_key:
             model["api_key"] = api_key
+        if saved_api_mode:
+            model["api_mode"] = saved_api_mode
+        else:
+            model.pop("api_mode", None)
         save_config(cfg)
         deactivate_provider()
 
@@ -1781,11 +1810,15 @@ def _model_flow_named_custom(config, provider_info):
     model["base_url"] = base_url
     if api_key:
         model["api_key"] = api_key
+    if saved_api_mode:
+        model["api_mode"] = saved_api_mode
+    else:
+        model.pop("api_mode", None)
     save_config(cfg)
     deactivate_provider()
 
     # Save model name to the custom_providers entry for next time
-    _save_custom_provider(base_url, api_key, model_name)
+    _save_custom_provider(base_url, api_key, model_name, api_mode=saved_api_mode)
 
     print(f"\n✅ Model set to: {model_name}")
     print(f"   Provider: {name} ({base_url})")
@@ -1793,6 +1826,47 @@ def _model_flow_named_custom(config, provider_info):
 
 # Curated model lists for direct API-key providers — single source in models.py
 from hermes_cli.models import _PROVIDER_MODELS
+
+
+_VALID_CUSTOM_API_MODES = {"chat_completions", "codex_responses", "anthropic_messages"}
+
+
+def _normalize_saved_api_mode(value):
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _VALID_CUSTOM_API_MODES:
+            return normalized
+    return ""
+
+
+def _get_saved_custom_api_mode(config, base_url=""):
+    """Return the persisted api_mode for a custom endpoint, if any."""
+    target_url = (base_url or "").strip().rstrip("/")
+    if not target_url:
+        return ""
+
+    model_cfg = config.get("model")
+    if isinstance(model_cfg, dict):
+        model_provider = str(model_cfg.get("provider") or "").strip().lower()
+        model_base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")
+        if model_provider == "custom" and model_base_url == target_url:
+            mode = _normalize_saved_api_mode(model_cfg.get("api_mode"))
+            if mode:
+                return mode
+
+    providers = config.get("custom_providers")
+    if isinstance(providers, list):
+        for entry in providers:
+            if not isinstance(entry, dict):
+                continue
+            entry_url = str(entry.get("base_url") or "").strip().rstrip("/")
+            if entry_url != target_url:
+                continue
+            mode = _normalize_saved_api_mode(entry.get("api_mode"))
+            if mode:
+                return mode
+
+    return ""
 
 
 def _current_reasoning_effort(config) -> str:
@@ -4424,6 +4498,11 @@ For more help on a command:
         "--insecure",
         action="store_true",
         help="Disable TLS verification for Nous login (testing only)"
+    )
+    model_parser.add_argument(
+        "--api-mode",
+        choices=sorted(_VALID_CUSTOM_API_MODES),
+        help="Override API mode for custom endpoints or saved custom providers"
     )
     model_parser.set_defaults(func=cmd_model)
 

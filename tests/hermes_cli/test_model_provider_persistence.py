@@ -257,3 +257,169 @@ class TestProviderPersistsAfterModelSave:
         assert model.get("provider") == "opencode-go"
         assert model.get("default") == "minimax-m2.5"
         assert model.get("api_mode") == "anthropic_messages"
+
+    def test_custom_endpoint_switch_preserves_saved_api_mode(self, config_home):
+        from hermes_cli.main import _model_flow_custom
+        from hermes_cli.config import load_config
+
+        (config_home / "config.yaml").write_text(
+            "model:\n"
+            "  default: old-model\n"
+            "  provider: custom\n"
+            "  base_url: https://example.test/v1\n"
+            "  api_mode: anthropic_messages\n"
+            "custom_providers:\n"
+            "  - name: Example\n"
+            "    base_url: https://example.test/v1\n"
+            "    api_mode: anthropic_messages\n"
+            "    model: old-model\n"
+        )
+
+        with patch(
+            "hermes_cli.models.probe_api_models",
+            return_value={"models": ["new-model"], "probed_url": "https://example.test/v1/models"},
+        ), patch(
+            "hermes_cli.auth.deactivate_provider",
+        ), patch(
+            "builtins.input",
+            side_effect=["", "", ""],
+        ), patch(
+            "getpass.getpass",
+            return_value="",
+        ):
+            _model_flow_custom(load_config())
+
+        import yaml
+
+        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        model = config.get("model") or {}
+        assert model.get("provider") == "custom"
+        assert model.get("default") == "new-model"
+        assert model.get("api_mode") == "anthropic_messages"
+        custom_provider = config["custom_providers"][0]
+        assert custom_provider.get("model") == "new-model"
+        assert custom_provider.get("api_mode") == "anthropic_messages"
+
+    def test_named_custom_provider_switch_preserves_saved_api_mode(self, config_home):
+        from hermes_cli.main import _model_flow_named_custom
+        from hermes_cli.config import load_config
+
+        (config_home / "config.yaml").write_text(
+            "model:\n"
+            "  default: old-model\n"
+            "custom_providers:\n"
+            "  - name: Example\n"
+            "    base_url: https://example.test/v1\n"
+            "    api_mode: codex_responses\n"
+        )
+
+        provider_info = {
+            "name": "Example",
+            "base_url": "https://example.test/v1",
+            "api_key": "",
+            "api_mode": "codex_responses",
+        }
+
+        with patch(
+            "hermes_cli.models.fetch_api_models",
+            return_value=["next-model"],
+        ), patch(
+            "hermes_cli.auth.deactivate_provider",
+        ), patch(
+            "hermes_cli.auth._prompt_model_selection",
+        ), patch(
+            "builtins.input",
+            return_value="1",
+        ):
+            _model_flow_named_custom(load_config(), provider_info)
+
+        import yaml
+
+        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        model = config.get("model") or {}
+        assert model.get("provider") == "custom"
+        assert model.get("default") == "next-model"
+        assert model.get("api_mode") == "codex_responses"
+        custom_provider = config["custom_providers"][0]
+        assert custom_provider.get("model") == "next-model"
+        assert custom_provider.get("api_mode") == "codex_responses"
+
+    def test_custom_endpoint_switch_allows_explicit_api_mode_override(self, config_home):
+        from hermes_cli.main import _model_flow_custom
+        from hermes_cli.config import load_config
+
+        (config_home / "config.yaml").write_text(
+            "model:\n"
+            "  default: old-model\n"
+            "  provider: custom\n"
+            "  base_url: https://example.test/v1\n"
+            "  api_mode: anthropic_messages\n"
+            "custom_providers:\n"
+            "  - name: Example\n"
+            "    base_url: https://example.test/v1\n"
+            "    api_mode: anthropic_messages\n"
+            "    model: old-model\n"
+        )
+
+        with patch(
+            "hermes_cli.models.probe_api_models",
+            return_value={"models": ["new-model"], "probed_url": "https://example.test/v1/models"},
+        ), patch(
+            "hermes_cli.auth.deactivate_provider",
+        ), patch(
+            "builtins.input",
+            side_effect=["", "", ""],
+        ), patch(
+            "getpass.getpass",
+            return_value="",
+        ):
+            _model_flow_custom(load_config(), api_mode="codex_responses")
+
+        import yaml
+
+        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        model = config.get("model") or {}
+        assert model.get("api_mode") == "codex_responses"
+        custom_provider = config["custom_providers"][0]
+        assert custom_provider.get("api_mode") == "codex_responses"
+
+    def test_named_custom_provider_switch_allows_explicit_api_mode_override(self, config_home):
+        from hermes_cli.main import _model_flow_named_custom
+        from hermes_cli.config import load_config
+
+        (config_home / "config.yaml").write_text(
+            "model:\n"
+            "  default: old-model\n"
+            "custom_providers:\n"
+            "  - name: Example\n"
+            "    base_url: https://example.test/v1\n"
+            "    api_mode: anthropic_messages\n"
+        )
+
+        provider_info = {
+            "name": "Example",
+            "base_url": "https://example.test/v1",
+            "api_key": "",
+            "api_mode": "anthropic_messages",
+        }
+
+        with patch(
+            "hermes_cli.models.fetch_api_models",
+            return_value=["next-model"],
+        ), patch(
+            "hermes_cli.auth.deactivate_provider",
+        ), patch(
+            "hermes_cli.auth._prompt_model_selection",
+        ), patch(
+            "builtins.input",
+            return_value="1",
+        ):
+            _model_flow_named_custom(load_config(), provider_info, api_mode="codex_responses")
+
+        import yaml
+
+        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        model = config.get("model") or {}
+        assert model.get("api_mode") == "codex_responses"
+        custom_provider = config["custom_providers"][0]
+        assert custom_provider.get("api_mode") == "codex_responses"
