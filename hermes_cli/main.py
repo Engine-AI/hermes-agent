@@ -1619,6 +1619,10 @@ def _model_flow_custom(config, api_mode=""):
             model_name = input("Model name (e.g. gpt-4, llama-3-70b): ").strip()
 
         context_length_str = input("Context length in tokens [leave blank for auto-detect]: ").strip()
+
+        # Prompt for a display name — shown in the provider menu on future runs
+        default_name = _auto_provider_name(effective_url)
+        display_name = input(f"Display name [{default_name}]: ").strip() or default_name
     except (KeyboardInterrupt, EOFError):
         print("\nCancelled.")
         return
@@ -1691,14 +1695,38 @@ def _model_flow_custom(config, api_mode=""):
         context_length=context_length,
         api_mode=explicit_api_mode or _get_saved_custom_api_mode(load_config(), effective_url),
     )
+    _save_custom_provider(effective_url, effective_key, model_name or "",
+                          context_length=context_length, name=display_name)
 
+
+def _auto_provider_name(base_url: str) -> str:
+    """Generate a display name from a custom endpoint URL.
 
 def _save_custom_provider(base_url, api_key="", model="", context_length=None, api_mode=""):
+    Returns a human-friendly label like "Local (localhost:11434)" or
+    "RunPod (xyz.runpod.io)".  Used as the default when prompting the
+    user for a display name during custom endpoint setup.
+    """
+    import re
+    clean = base_url.replace("https://", "").replace("http://", "").rstrip("/")
+    clean = re.sub(r"/v1/?$", "", clean)
+    name = clean.split("/")[0]
+    if "localhost" in name or "127.0.0.1" in name:
+        name = f"Local ({name})"
+    elif "runpod" in name.lower():
+        name = f"RunPod ({name})"
+    else:
+        name = name.capitalize()
+    return name
+
+
+def _save_custom_provider(base_url, api_key="", model="", context_length=None,
+                          name=None):
     """Save a custom endpoint to custom_providers in config.yaml.
 
     Deduplicates by base_url — if the URL already exists, updates the
     model name and context_length but doesn't add a duplicate entry.
-    Auto-generates a display name from the URL hostname.
+    Uses *name* when provided, otherwise auto-generates from the URL.
     """
     from hermes_cli.config import load_config, save_config
 
@@ -1730,20 +1758,9 @@ def _save_custom_provider(base_url, api_key="", model="", context_length=None, a
                 save_config(cfg)
             return  # already saved, updated if needed
 
-    # Auto-generate a name from the URL
-    import re
-    clean = base_url.replace("https://", "").replace("http://", "").rstrip("/")
-    # Remove /v1 suffix for cleaner names
-    clean = re.sub(r"/v1/?$", "", clean)
-    # Use hostname:port as the name
-    name = clean.split("/")[0]
-    # Capitalize for readability
-    if "localhost" in name or "127.0.0.1" in name:
-        name = f"Local ({name})"
-    elif "runpod" in name.lower():
-        name = f"RunPod ({name})"
-    else:
-        name = name.capitalize()
+    # Use provided name or auto-generate from URL
+    if not name:
+        name = _auto_provider_name(base_url)
 
     entry = {"name": name, "base_url": base_url}
     if api_key:
