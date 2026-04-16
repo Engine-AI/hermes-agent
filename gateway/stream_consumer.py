@@ -609,12 +609,15 @@ class GatewayStreamConsumer:
                 content=text,
                 metadata=self.metadata,
             )
-            if result.success:
-                self._already_sent = True
-                return True
+            # Note: do NOT set _already_sent = True here.
+            # Commentary messages are interim status updates (e.g. "Using browser
+            # tool..."), not the final response. Setting already_sent would cause
+            # the final response to be incorrectly suppressed when there are
+            # multiple tool calls. See: https://github.com/NousResearch/hermes-agent/issues/10454
+            return result.success
         except Exception as e:
             logger.error("Commentary send error: %s", e)
-        return False
+            return False
 
     async def _send_or_edit(self, text: str) -> bool:
         """Send or edit the streaming message.
@@ -632,10 +635,26 @@ class GatewayStreamConsumer:
         visible_without_cursor = text
         if self.cfg.cursor:
             visible_without_cursor = visible_without_cursor.replace(self.cfg.cursor, "")
-        if not visible_without_cursor.strip():
+        _visible_stripped = visible_without_cursor.strip()
+        if not _visible_stripped:
             return True  # cursor-only / whitespace-only update
         if not text.strip():
             return True  # nothing to send is "success"
+        # Guard: do not create a brand-new standalone message when the only
+        # visible content is a handful of characters alongside the streaming
+        # cursor.  During rapid tool-calling the model often emits 1-2 tokens
+        # before switching to tool calls; the resulting "X ▉" message risks
+        # leaving the cursor permanently visible if the follow-up edit (to
+        # strip the cursor on segment break) is rate-limited by the platform.
+        # This was reported on Telegram, Matrix, and other clients where the
+        # ▉ block character renders as a visible white box ("tofu").
+        # Existing messages (edits) are unaffected — only first sends gated.
+        _MIN_NEW_MSG_CHARS = 4
+        if (self._message_id is None
+                and self.cfg.cursor
+                and self.cfg.cursor in text
+                and len(_visible_stripped) < _MIN_NEW_MSG_CHARS):
+            return True  # too short for a standalone message — accumulate more
         try:
             if self._message_id is not None:
                 if self._edit_supported:
