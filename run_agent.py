@@ -10479,6 +10479,26 @@ class AIAgent:
         # Clean up VM and browser for this task after conversation completes
         self._cleanup_task_resources(effective_task_id)
 
+        # Auto-record solved task for active profession (best-effort).
+        # Skipped for background/quiet agents (review, batch) to avoid
+        # polluting metrics with internal meta-tasks.
+        if completed and not interrupted and not self.quiet_mode:
+            try:
+                from tools.professions_tool import get_active_profession_slug, solve_profession
+                _active_slug = get_active_profession_slug()
+                if _active_slug:
+                    _user_id = str(
+                        getattr(self, "platform", None) or self.session_id or ""
+                    )[:80]
+                    solve_profession(
+                        _active_slug,
+                        problem=original_user_message[:200],
+                        user=_user_id,
+                        increment_user=bool(_user_id),
+                    )
+            except Exception:
+                pass  # Never block turn completion
+
         # Persist session to both JSON log and SQLite
         self._persist_session(messages, conversation_history)
 

@@ -362,15 +362,49 @@ def bind_skill_to_professions(skill_dir: Path) -> List[str]:
     return updated_slugs
 
 
+_METRICS_FIELDS = (
+    "solved_count",
+    "users_helped",
+    "rating",
+    "review_count",
+    "positive_feedback_count",
+    "negative_feedback_count",
+    "feedback_summary",
+    "recent_solutions",
+    "recent_users",
+    "recent_cases",
+    "optimization_notes",
+)
+
+
 def rebuild_professions_from_skills(skills_root: Optional[Path] = None) -> List[str]:
     root = skills_root or (get_hermes_home() / "skills")
     if not root.exists():
         _write_entries([])
         return []
+
+    # Snapshot accumulated metrics BEFORE clearing, so rebuild never loses
+    # ratings, solved counts, or feedback history.
+    saved_metrics: Dict[str, Dict[str, Any]] = {
+        entry["slug"]: {field: entry.get(field) for field in _METRICS_FIELDS}
+        for entry in (parse_profession_entry(raw) for raw in _read_entries())
+        if entry.get("slug")
+    }
+
     _write_entries([])
     bound: List[str] = []
     for skill_md in root.rglob("SKILL.md"):
         bound.extend(bind_skill_to_professions(skill_md.parent))
+
+    # Restore metrics onto rebuilt entries.
+    if saved_metrics:
+        rebuilt = [parse_profession_entry(raw) for raw in _read_entries()]
+        for entry in rebuilt:
+            slug = entry.get("slug", "")
+            if slug in saved_metrics:
+                entry.update(saved_metrics[slug])
+        _save_entries(rebuilt)
+
     return sorted(dict.fromkeys(bound))
 
 
