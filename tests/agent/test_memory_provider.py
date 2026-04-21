@@ -1112,8 +1112,6 @@ class TestHonchoCadenceTracking:
         class FakeManager:
             def prefetch_context(self, key, query=None):
                 pass
-            def prefetch_dialectic(self, key, query):
-                pass
 
         p._manager = FakeManager()
 
