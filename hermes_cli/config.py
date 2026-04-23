@@ -577,6 +577,30 @@ DEFAULT_CONFIG = {
             "timeout": 30,
             "extra_body": {},
         },
+        "profession_routing": {
+            "provider": "auto",
+            "model": "",           # empty = main model (recommended)
+            "base_url": "",
+            "api_key": "",
+            "timeout": 30,
+            "extra_body": {},
+        },
+        "profession_scoring": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 30,
+            "extra_body": {},
+        },
+        "profession_binding": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 30,
+            "extra_body": {},
+        },
     },
     
     "display": {
@@ -753,7 +777,30 @@ DEFAULT_CONFIG = {
     },
 
     "professions": {
-        "active": "",  # slug of the currently preferred profession
+        "active": "",           # slug of the currently preferred profession
+        "auto_route": False,    # When True: auto-select profession per query (first turn + drift)
+        "drift_check_interval": 5,   # After first turn, re-route every N turns
+        "auto_create": True,    # When the router asks to create a new profession, allow it
+        "auto_score": True,     # Score professions via LLM on switch/session end
+        "auto_cross_bind": True,  # After skill create/edit, LLM-check for additional profession bindings
+    },
+
+    # Brain: orchestrator over the profession router. Cost guards + gap detection.
+    "brain": {
+        "budget_per_session": 3,           # Max router LLM calls per session (fast-path bypasses this)
+        "reset_on_profession_switch": True,  # Restart the counter after every profession change
+        "bloat_soft_cap": 15,              # Profession skill count above which brain emits split-proposal
+        "retry_gap_threshold": 3,          # Same intent repeated N times in same profession → skill-gap signal
+        "proposal_dedup_threshold": 0.75,  # SequenceMatcher ratio above which proposals are deduped
+    },
+
+    # Goals: long-term user intent above professions. See tools/goals_tool.py.
+    "goals": {
+        "enabled": True,                   # Master switch; when False, summarize_active() returns ""
+        "inject_into_brain": True,         # Pass active-goals summary to the router LLM
+        "inject_into_prompt": False,       # Also inject into the main system prompt (heavier; opt-in)
+        "max_active_goals": 5,             # Cap on goals included in summaries
+        "max_summary_chars": 800,          # Hard cap on the summary block size
     },
 
     # Honcho AI-native memory -- reads ~/.honcho/config.json as single source of truth.

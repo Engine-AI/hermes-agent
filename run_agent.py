@@ -4092,6 +4092,7 @@ class AIAgent:
             skills_prompt = build_skills_system_prompt(
                 available_tools=self.valid_tool_names,
                 available_toolsets=avail_toolsets,
+                borrowed_skills=getattr(self, "_active_borrowed_skills_names", None),
             )
         else:
             skills_prompt = ""
@@ -8558,6 +8559,134 @@ class AIAgent:
         
         # Track user turns for memory flush and periodic nudge logic
         self._user_turn_count += 1
+
+        # ── Brain: profession routing + skill-gap detection + goals ──
+        # Gated on professions.auto_route. Composes:
+        #   1. Retry-based gap detection (no LLM, runs every turn)
+        #   2. Keyword fast-path (no LLM, in router)
+        #   3. LLM router (budget-capped per session)
+        # Any failure falls back to "stay" — never blocks the conversation.
+        try:
+            from agent.profession_router import (
+                should_route as _pr_should_route,
+                route as _pr_route,
+                apply_decision as _pr_apply,
+                record_turn_for_gap_detection as _pr_record_gap,
+                reset_brain_budget as _pr_reset_budget,
+            )
+            from tools.professions_tool import get_active_profession_slug as _pr_active_slug
+
+            # Retry-based gap detection runs every turn, even when the LLM
+            # router is gated off — it's cheap and catches "user keeps
+            # retrying the same thing" patterns we'd otherwise miss.
+            _active_slug_pre = ""
+            try:
+                _active_slug_pre = _pr_active_slug() or ""
+            except Exception:
+                _active_slug_pre = ""
+            _heuristic_gap = _pr_record_gap(_active_slug_pre, user_message)
+            if _heuristic_gap and _heuristic_gap.get("intent"):
+                try:
+                    from tools.skill_proposals_tool import create_proposal as _pr_create_proposal
+                    _pr_create_proposal(
+                        intent=str(_heuristic_gap.get("intent"))[:300],
+                        requesting_profession=_active_slug_pre,
+                        created_by="brain",
+                        failed_attempts=1,
+                    )
+                    logger.info(
+                        "brain: retry-based skill gap proposal emitted for slug=%s",
+                        _active_slug_pre or "none",
+                    )
+                except Exception as _gap_err:
+                    logger.debug("retry-gap proposal emit failed: %s", _gap_err)
+
+            if _pr_should_route(self._user_turn_count, ""):
+                _recent_turns = [
+                    {"role": m.get("role"), "content": m.get("content")}
+                    for m in (messages or [])[-3:]
+                    if isinstance(m, dict) and m.get("role") in ("user", "assistant")
+                ]
+                # Active goals → brain context (cheap, cached summary).
+                _goals_context = ""
+                try:
+                    from tools.goals_tool import summarize_active as _g_summarize, inject_into_brain as _g_inject
+                    if _g_inject():
+                        _goals_context = _g_summarize() or ""
+                except Exception:
+                    _goals_context = ""
+
+                _decision = _pr_route(
+                    user_message,
+                    recent_turns=_recent_turns,
+                    goals_context=_goals_context,
+                    session_id=self.session_id or "",
+                )
+                _applied = _pr_apply(_decision)
+                _action = _applied.get("action") or _decision.action
+
+                if _applied.get("changed"):
+                    # Score the OUTGOING profession before rebuilding prompt.
+                    _prior_slug = _applied.get("prior_slug")
+                    if _prior_slug:
+                        try:
+                            from tools.professions_tool import llm_score_profession
+                            _convo_summary = "\n".join(
+                                str(m.get("content", ""))[:400]
+                                for m in (messages or [])[-6:]
+                                if isinstance(m, dict) and m.get("content")
+                            )
+                            if _convo_summary.strip():
+                                llm_score_profession(_prior_slug, _convo_summary)
+                        except Exception:
+                            pass
+                    # Force system-prompt rebuild so the new profession's
+                    # skill index is injected on this very turn.
+                    self._invalidate_system_prompt()
+                    # Clear any stale borrow on profession switch.
+                    if hasattr(self, "_active_borrowed_skills_names"):
+                        self._active_borrowed_skills_names = None
+                    # Reset the brain budget counter on profession switch
+                    # when configured (default True).
+                    try:
+                        from hermes_cli.config import load_config as _brain_load_cfg
+                        _bcfg = (_brain_load_cfg() or {}).get("brain", {}) or {}
+                        if _bcfg.get("reset_on_profession_switch", True):
+                            _pr_reset_budget(self.session_id or "")
+                    except Exception:
+                        pass
+                    logger.info(
+                        "profession_router: %s -> %s (reason=%s)",
+                        _applied.get("prior_slug") or "none",
+                        _applied.get("slug") or "none",
+                        _decision.reason,
+                    )
+                elif _action == "borrow":
+                    # No profession change, but record borrowed skills and
+                    # invalidate the prompt so they appear in this turn.
+                    _borrowed = tuple(
+                        sorted({str(s).strip() for s in (_applied.get("borrow_skills") or []) if str(s).strip()})
+                    )
+                    _prev_borrowed = tuple(
+                        sorted(getattr(self, "_active_borrowed_skills_names", None) or ())
+                    )
+                    if _borrowed != _prev_borrowed:
+                        self._active_borrowed_skills_names = _borrowed
+                        self._invalidate_system_prompt()
+                        logger.info(
+                            "profession_router: borrow %s from %s (reason=%s)",
+                            list(_borrowed),
+                            _applied.get("borrow_from") or [],
+                            _decision.reason,
+                        )
+                else:
+                    # stay / no-op. Reset any stale borrow state from a
+                    # previous turn that did borrow.
+                    if getattr(self, "_active_borrowed_skills_names", None):
+                        self._active_borrowed_skills_names = None
+                        self._invalidate_system_prompt()
+        except Exception as _pr_err:
+            logger.debug("profession_router integration skipped: %s", _pr_err)
 
         # Preserve the original user message (no nudge injection).
         original_user_message = persist_user_message if persist_user_message is not None else user_message

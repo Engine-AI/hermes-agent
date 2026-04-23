@@ -35,6 +35,13 @@ from hermes_cli.config import load_config, save_config
 ENTRY_DELIMITER = "\n§\n"
 RECENT_ITEMS_LIMIT = 5
 
+# Cost guards: bound the size of recent_cases stored per profession. Without
+# this, the router and prompt grow unboundedly as solve_profession keeps
+# appending. Each case is also hard-capped so a very long "case label" can't
+# balloon the file. ~600 chars ≈ 150 tokens — enough for routing context.
+_MAX_RECENT_CASES = 3
+_MAX_CASE_CHARS = 600
+
 
 def get_professions_path() -> Path:
     return get_hermes_home() / "memories" / "PROFESSIONS.md"
@@ -155,7 +162,7 @@ def render_profession_entry(entry: Dict[str, Any]) -> str:
     domains = ", ".join(sorted(dict.fromkeys(entry.get("problem_domains", []))))
     recent_solutions = " | ".join((entry.get("recent_solutions") or [])[:RECENT_ITEMS_LIMIT])
     recent_users = ", ".join((entry.get("recent_users") or [])[:RECENT_ITEMS_LIMIT])
-    recent_cases = " | ".join((entry.get("recent_cases") or [])[:RECENT_ITEMS_LIMIT])
+    recent_cases = " | ".join(_truncate_recent_cases(entry.get("recent_cases") or []))
     optimization_notes = entry.get("optimization_notes", "").strip() or build_optimization_notes(entry)
     return "\n".join(
         [
@@ -333,6 +340,15 @@ def infer_professions_for_skill(skill_dir: Path) -> List[Dict[str, Any]]:
 
 
 def bind_skill_to_professions(skill_dir: Path) -> List[str]:
+    # Skills under `_common/` are infrastructure — always available, never
+    # assigned to a specific profession. Skip binding entirely.
+    try:
+        rel_parts = skill_dir.relative_to(get_hermes_home() / "skills").parts
+        if rel_parts and rel_parts[0] == "_common":
+            return []
+    except Exception:
+        pass
+
     inferred = infer_professions_for_skill(skill_dir)
     if not inferred:
         return []
@@ -446,6 +462,25 @@ def _compact_recent_items(values: List[str], *, limit: int = RECENT_ITEMS_LIMIT)
         if len(compacted) >= limit:
             break
     return compacted
+
+
+def _truncate_recent_cases(cases: List[str]) -> List[str]:
+    """Cap recent_cases to ``_MAX_RECENT_CASES`` entries, each ≤ ``_MAX_CASE_CHARS``.
+
+    Applied both on solve (write path) and render (defensive: fixes any
+    pre-existing bloated files on the next save cycle).
+    """
+    if not cases:
+        return []
+    truncated: List[str] = []
+    for value in cases[:_MAX_RECENT_CASES]:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        if len(text) > _MAX_CASE_CHARS:
+            text = text[: _MAX_CASE_CHARS - 3] + "..."
+        truncated.append(text)
+    return truncated
 
 
 def set_active_profession(slug_or_name: str) -> Dict[str, Any]:
@@ -639,7 +674,9 @@ def solve_profession(
 
         recent_solutions = [solution_label] + list(item.get("recent_solutions") or [])
         item["recent_solutions"] = _compact_recent_items(recent_solutions)
-        item["recent_cases"] = _compact_recent_items([case_label] + list(item.get("recent_cases") or []))
+        item["recent_cases"] = _truncate_recent_cases(
+            _compact_recent_items([case_label] + list(item.get("recent_cases") or []))
+        )
 
         if user:
             existing_users = list(item.get("recent_users") or [])
@@ -652,6 +689,21 @@ def solve_profession(
             item["feedback_summary"] = summary
 
         _save_entries(entries)
+
+        # Goal progress fan-out: append to any active goals that link this
+        # profession. Lazy import avoids a module-load cycle with goals_tool.
+        try:
+            from tools.goals_tool import list_goals as _g_list, add_progress as _g_progress
+            _slug = item["slug"]
+            for g in _g_list():
+                if g.get("status") != "active":
+                    continue
+                if _slug in (g.get("linked_professions") or []):
+                    _g_progress(g["slug"], solution_label[:200], source=_slug)
+        except Exception:
+            # Never block solve flow on goals integration.
+            pass
+
         return {
             "success": True,
             "profession": item["profession"],
@@ -663,3 +715,300 @@ def solve_profession(
         }
 
     return {"success": False, "error": f"Profession not found: {slug_or_name}"}
+
+
+# ---------------------------------------------------------------------------
+# Auto-routing extensions (v1): auto-create professions, LLM-driven
+# cross-profession binding for skills, and LLM-driven scoring. All extensions
+# are passive when `professions.auto_route` is False — callers gate them on
+# that flag so legacy behavior is preserved.
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+
+_CROSS_BIND_MAX = 3  # Cap profession bindings per skill to avoid dilution.
+
+
+def professions_auto_route_enabled() -> bool:
+    cfg = load_config() or {}
+    prof_cfg = cfg.get("professions", {}) if isinstance(cfg, dict) else {}
+    return bool(isinstance(prof_cfg, dict) and prof_cfg.get("auto_route"))
+
+
+def _profession_feature_enabled(key: str, default: bool = True) -> bool:
+    cfg = load_config() or {}
+    prof_cfg = cfg.get("professions", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(prof_cfg, dict):
+        return default
+    val = prof_cfg.get(key)
+    return default if val is None else bool(val)
+
+
+def auto_create_profession(
+    name: str,
+    problem_domains: Optional[List[str]] = None,
+    suggested_skills: Optional[List[str]] = None,
+    description: str = "",
+) -> Dict[str, Any]:
+    """Create a new profession entry. Returns {success, slug, profession, ...}.
+
+    Duplicate slugs are rejected so the router can fall back to `switch` on
+    the existing entry instead of silently overwriting metrics.
+    """
+    name = (name or "").strip()
+    if not name:
+        return {"success": False, "error": "name is required"}
+
+    slug = slugify_profession(name)
+    existing = get_profession(slug)
+    if existing:
+        return {
+            "success": False,
+            "error": f"Profession already exists: {existing.get('profession') or slug}",
+            "slug": slug,
+            "profession": existing.get("profession") or slug,
+            "existed": True,
+        }
+
+    domains = [str(d).strip() for d in (problem_domains or []) if str(d).strip()]
+    skills = [str(s).strip() for s in (suggested_skills or []) if str(s).strip()]
+
+    entries = list_professions()
+    new_entry = {
+        "profession": name,
+        "slug": slug,
+        "skills": sorted(dict.fromkeys(skills)),
+        "problem_domains": sorted(dict.fromkeys(domains)),
+        "solved_count": 0,
+        "users_helped": 0,
+        "rating": 0.0,
+        "score": 0.0,
+        "review_count": 0,
+        "positive_feedback_count": 0,
+        "negative_feedback_count": 0,
+        "feedback_summary": "",
+        "recent_solutions": [],
+        "recent_users": [],
+        "recent_cases": [],
+        "optimization_notes": "",
+        "description": (description or f"Auto-created profession for {name}.").strip(),
+    }
+    entries.append(new_entry)
+    _save_entries(entries)
+    return {
+        "success": True,
+        "slug": slug,
+        "profession": name,
+        "problem_domains": new_entry["problem_domains"],
+        "skills": new_entry["skills"],
+        "created": True,
+    }
+
+
+def _extract_first_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """Tolerant JSON extractor for LLM free-form output."""
+    if not text:
+        return None
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        text = text.strip()
+    try:
+        value = json.loads(text)
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        pass
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start : idx + 1]
+                try:
+                    value = json.loads(candidate)
+                    if isinstance(value, dict):
+                        return value
+                except Exception:
+                    return None
+    return None
+
+
+def _summarize_professions_for_prompt() -> List[Dict[str, Any]]:
+    compact = []
+    for entry in list_professions():
+        compact.append(
+            {
+                "slug": entry.get("slug", ""),
+                "name": entry.get("profession", ""),
+                "problem_domains": entry.get("problem_domains", []),
+                "skills_count": len(entry.get("skills", []) or []),
+                "score": entry.get("score", 0.0),
+            }
+        )
+    return compact
+
+
+def check_cross_profession_binding(skill_dir: Path) -> List[str]:
+    """Ask the main LLM which existing professions this skill should also bind to.
+
+    Returns slugs that received new bindings (empty on no-op/failure). Capped
+    at ``_CROSS_BIND_MAX`` to avoid binding dilution. Safe to call from skill
+    create/edit hooks — exceptions are swallowed.
+    """
+    if not _profession_feature_enabled("auto_cross_bind", default=True):
+        return []
+    try:
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.exists():
+            return []
+        raw = skill_md.read_text(encoding="utf-8")[:4000]
+        frontmatter, _ = parse_frontmatter(raw)
+        skill_name = skill_dir.name
+        description = str(frontmatter.get("description") or "").strip()
+
+        professions_summary = _summarize_professions_for_prompt()
+        if not professions_summary:
+            return []
+
+        already_bound: set = set()
+        for entry in list_professions():
+            if skill_name in (entry.get("skills") or []):
+                already_bound.add(entry.get("slug", ""))
+
+        room = max(0, _CROSS_BIND_MAX - len(already_bound))
+        if room <= 0:
+            return []
+
+        from agent.auxiliary_client import call_llm
+
+        system = (
+            "You decide which existing Hermes professions a skill should bind to. "
+            "Return ONLY JSON: {\"slugs\": [\"slug1\", ...]} with AT MOST "
+            f"{room} additional slugs, drawn strictly from the provided profession "
+            "list. Return an empty list if none fit."
+        )
+        user = (
+            f"Skill name: {skill_name}\n"
+            f"Skill description: {description}\n"
+            f"Already bound to: {sorted(already_bound) or 'none'}\n\n"
+            f"Candidate professions:\n{json.dumps(professions_summary, ensure_ascii=False)}"
+        )
+        response = call_llm(
+            task="profession_binding",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=200,
+            temperature=0.1,
+        )
+        content = (
+            response.choices[0].message.content
+            if hasattr(response, "choices")
+            else str(response or "")
+        )
+        decision = _extract_first_json_object(content or "")
+        if not decision:
+            return []
+        slugs = decision.get("slugs") or []
+        if not isinstance(slugs, list):
+            return []
+
+        valid_slugs = {p["slug"] for p in professions_summary if p.get("slug")}
+        bound_now: List[str] = []
+        for slug in slugs:
+            slug = str(slug or "").strip()
+            if not slug or slug in already_bound or slug not in valid_slugs:
+                continue
+            result = bind_skill_to_profession(slug, skill_name)
+            if result.get("success"):
+                bound_now.append(slug)
+                already_bound.add(slug)
+            if len(bound_now) >= room:
+                break
+        return bound_now
+    except Exception:
+        return []
+
+
+def llm_score_profession(slug_or_name: str, conversation_summary: str) -> Dict[str, Any]:
+    """Let the main LLM self-score a profession from a conversation summary.
+
+    Applies the score via existing ``rate_profession`` / ``feedback_profession``
+    / ``solve_profession`` so metric storage stays canonical. Returns
+    {"success": bool, "applied": {...}, "raw": {...}}. Gated by
+    ``professions.auto_score`` — no-op when disabled.
+    """
+    if not _profession_feature_enabled("auto_score", default=True):
+        return {"success": False, "error": "auto_score disabled"}
+    entry = get_profession(slug_or_name)
+    if not entry:
+        return {"success": False, "error": f"Profession not found: {slug_or_name}"}
+    summary = (conversation_summary or "").strip()
+    if not summary:
+        return {"success": False, "error": "conversation_summary is required"}
+
+    try:
+        from agent.auxiliary_client import call_llm
+
+        system = (
+            "You silently evaluate how well a Hermes profession served a user in a "
+            "conversation. Return ONLY JSON: "
+            "{\"rating\": 1-5 integer, \"sentiment\": \"positive\"|\"negative\", "
+            "\"solved\": boolean, \"summary\": short string}. Do not add commentary."
+        )
+        user = (
+            f"Profession: {entry.get('profession')}\n"
+            f"Problem domains: {entry.get('problem_domains')}\n"
+            f"Current rating: {entry.get('rating')}  solved_count: {entry.get('solved_count')}\n\n"
+            f"Conversation summary:\n{summary}"
+        )
+        response = call_llm(
+            task="profession_scoring",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=300,
+            temperature=0.0,
+        )
+        content = (
+            response.choices[0].message.content
+            if hasattr(response, "choices")
+            else str(response or "")
+        )
+        decision = _extract_first_json_object(content or "")
+    except Exception as e:
+        return {"success": False, "error": f"llm call failed: {e}"}
+
+    if not decision:
+        return {"success": False, "error": "could not parse scoring JSON"}
+
+    rating = decision.get("rating")
+    sentiment = str(decision.get("sentiment") or "").lower()
+    solved = bool(decision.get("solved"))
+    short_summary = str(decision.get("summary") or "").strip()
+
+    applied: Dict[str, Any] = {}
+    if isinstance(rating, (int, float)):
+        applied["rate"] = rate_profession(entry["slug"], int(rating), short_summary)
+    if sentiment in {"positive", "negative"}:
+        applied["feedback"] = feedback_profession(entry["slug"], sentiment, short_summary)
+    if solved:
+        applied["solve"] = solve_profession(
+            entry["slug"],
+            problem=short_summary or "conversation task",
+            user="",
+            summary=short_summary,
+            increment_user=False,
+        )
+
+    return {"success": True, "applied": applied, "raw": decision}

@@ -165,4 +165,36 @@ def professions_command(args) -> None:
         print(str(get_professions_path()))
         return
 
-    print("Usage: hermes professions [list|show|use|rate|feedback|solve|bind|unbind|rebuild|path]")
+    if action == "auto":
+        from hermes_cli.config import load_config, save_config
+
+        state = getattr(args, "state", "status")
+        cfg = load_config() or {}
+        prof_cfg = cfg.setdefault("professions", {})
+        if not isinstance(prof_cfg, dict):
+            prof_cfg = {}
+            cfg["professions"] = prof_cfg
+
+        if state == "status":
+            enabled = bool(prof_cfg.get("auto_route"))
+            interval = prof_cfg.get("drift_check_interval") or 5
+            print()
+            print(color("  Auto-routing: ", Colors.BOLD) + ("on" if enabled else "off"))
+            print(f"  Drift check interval: every {interval} turns")
+            print(f"  Auto-create profession: {'on' if prof_cfg.get('auto_create', True) else 'off'}")
+            print(f"  Auto-score:            {'on' if prof_cfg.get('auto_score', True) else 'off'}")
+            print(f"  Auto cross-bind:       {'on' if prof_cfg.get('auto_cross_bind', True) else 'off'}")
+            print()
+            return
+
+        prof_cfg["auto_route"] = (state == "on")
+        # Seed sensible defaults on first enable.
+        prof_cfg.setdefault("drift_check_interval", 5)
+        prof_cfg.setdefault("auto_create", True)
+        prof_cfg.setdefault("auto_score", True)
+        prof_cfg.setdefault("auto_cross_bind", True)
+        save_config(cfg)
+        print(color(f"  Auto-routing is now {state}.", Colors.GREEN))
+        return
+
+    print("Usage: hermes professions [list|show|use|rate|feedback|solve|bind|unbind|rebuild|path|auto]")

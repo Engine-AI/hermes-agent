@@ -110,6 +110,9 @@ COMMAND_REGISTRY: list[CommandDef] = [
 
     CommandDef("personality", "Set a predefined personality", "Configuration",
                args_hint="[name]"),
+    CommandDef("goal", "Pin an active goal for the session (brain focus)", "Configuration",
+               args_hint="[slug|list|clear]",
+               subcommands=("list", "clear")),
     CommandDef("statusbar", "Toggle the context/model status bar", "Configuration",
                cli_only=True, aliases=("sb",)),
     CommandDef("verbose", "Cycle tool progress display: off -> new -> all -> verbose",

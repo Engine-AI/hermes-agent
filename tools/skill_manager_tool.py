@@ -74,7 +74,7 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
     return None
 
 import yaml
-from tools.professions_tool import bind_skill_to_professions
+from tools.professions_tool import bind_skill_to_professions, check_cross_profession_binding
 
 
 # All skills live in ~/.hermes/skills/ (single source of truth)
@@ -358,6 +358,16 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
             result["bound_professions"] = bound
     except Exception as e:
         logger.warning("Failed to bind professions for skill '%s': %s", name, e)
+    try:
+        cross_bound = check_cross_profession_binding(skill_dir)
+        if cross_bound:
+            result.setdefault("bound_professions", [])
+            result["bound_professions"] = sorted(
+                dict.fromkeys(list(result["bound_professions"]) + cross_bound)
+            )
+            result["cross_bound_professions"] = cross_bound
+    except Exception as e:
+        logger.debug("Cross-profession binding skipped for skill '%s': %s", name, e)
     result["hint"] = (
         "To add reference files, templates, or scripts, use "
         "skill_manage(action='write_file', name='{}', file_path='references/example.md', file_content='...')".format(name)
@@ -405,6 +415,16 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
             result["bound_professions"] = bound
     except Exception as e:
         logger.warning("Failed to bind professions for skill '%s': %s", name, e)
+    try:
+        cross_bound = check_cross_profession_binding(existing["path"])
+        if cross_bound:
+            result.setdefault("bound_professions", [])
+            result["bound_professions"] = sorted(
+                dict.fromkeys(list(result["bound_professions"]) + cross_bound)
+            )
+            result["cross_bound_professions"] = cross_bound
+    except Exception as e:
+        logger.debug("Cross-profession binding skipped for skill '%s': %s", name, e)
     return result
 
 

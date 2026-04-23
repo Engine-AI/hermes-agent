@@ -1159,6 +1159,7 @@ def cmd_chat(args):
         "checkpoints": getattr(args, "checkpoints", False),
         "pass_session_id": getattr(args, "pass_session_id", False),
         "max_turns": getattr(args, "max_turns", None),
+        "goal": getattr(args, "goal", None),
     }
     # Filter out None values
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
@@ -1646,15 +1647,18 @@ def _clear_stale_openai_base_url():
 
 # (task_key, display_name, short_description)
 _AUX_TASKS: list[tuple[str, str, str]] = [
-    ("vision",           "Vision",           "image/screenshot analysis"),
-    ("compression",      "Compression",      "context summarization"),
-    ("web_extract",      "Web extract",      "web page summarization"),
-    ("session_search",   "Session search",   "past-conversation recall"),
-    ("approval",         "Approval",         "smart command approval"),
-    ("mcp",              "MCP",              "MCP tool reasoning"),
-    ("flush_memories",   "Flush memories",   "memory consolidation"),
-    ("title_generation", "Title generation", "session titles"),
-    ("skills_hub",       "Skills hub",       "skills search/install"),
+    ("vision",              "Vision",              "image/screenshot analysis"),
+    ("compression",         "Compression",         "context summarization"),
+    ("web_extract",         "Web extract",         "web page summarization"),
+    ("session_search",      "Session search",      "past-conversation recall"),
+    ("approval",            "Approval",            "smart command approval"),
+    ("mcp",                 "MCP",                 "MCP tool reasoning"),
+    ("flush_memories",      "Flush memories",      "memory consolidation"),
+    ("title_generation",    "Title generation",    "session titles"),
+    ("skills_hub",          "Skills hub",          "skills search/install"),
+    ("profession_routing",  "Profession routing",  "auto-select profession per query"),
+    ("profession_scoring",  "Profession scoring",  "LLM self-scoring of professions"),
+    ("profession_binding",  "Profession binding",  "cross-profession skill binding"),
 ]
 
 
@@ -2672,7 +2676,6 @@ def _model_flow_custom(config, api_mode=""):
 def _auto_provider_name(base_url: str) -> str:
     """Generate a display name from a custom endpoint URL.
 
-def _save_custom_provider(base_url, api_key="", model="", context_length=None, api_mode=""):
     Returns a human-friendly label like "Local (localhost:11434)" or
     "RunPod (xyz.runpod.io)".  Used as the default when prompting the
     user for a display name during custom endpoint setup.
@@ -2692,7 +2695,7 @@ def _save_custom_provider(base_url, api_key="", model="", context_length=None, a
 
 
 def _save_custom_provider(
-    base_url, api_key="", model="", context_length=None, name=None
+    base_url, api_key="", model="", context_length=None, api_mode="", name=None
 ):
     """Save a custom endpoint to custom_providers in config.yaml.
 
@@ -6583,6 +6586,11 @@ For more help on a command:
         help="Preload one or more skills for the session (repeat flag or comma-separate)",
     )
     chat_parser.add_argument(
+        "--goal",
+        default=None,
+        help="Pin an active goal for this session only (brain prioritizes it). Does not touch config.",
+    )
+    chat_parser.add_argument(
         "--provider",
         choices=[
             "auto",
@@ -7653,13 +7661,42 @@ Examples:
         help="Interactive skill configuration — enable/disable individual skills",
     )
 
+    # proposals sub-action: brain-proposed skill requests (see tools/skill_proposals_tool.py)
+    skills_proposals = skills_subparsers.add_parser(
+        "proposals",
+        help="Inspect brain-proposed skill requests (~/.hermes/skill-requests/)",
+        description="List, view, and triage skill-request proposals emitted by the brain.",
+    )
+    proposals_sub = skills_proposals.add_subparsers(dest="proposals_action")
+    proposals_list = proposals_sub.add_parser("list", help="List proposals (default: open)")
+    proposals_list.add_argument(
+        "--status",
+        default="open",
+        choices=["open", "accepted", "rejected", "fulfilled", "all"],
+        help="Filter by status",
+    )
+    proposals_show = proposals_sub.add_parser("show", help="Show one proposal")
+    proposals_show.add_argument("slug", help="Proposal slug")
+    proposals_accept = proposals_sub.add_parser("accept", help="Accept a proposal (move to accepted/)")
+    proposals_accept.add_argument("slug", help="Proposal slug")
+    proposals_reject = proposals_sub.add_parser("reject", help="Reject a proposal (move to rejected/)")
+    proposals_reject.add_argument("slug", help="Proposal slug")
+    proposals_fulfill = proposals_sub.add_parser("fulfill", help="Mark a proposal fulfilled")
+    proposals_fulfill.add_argument("slug", help="Proposal slug")
+    proposals_sub.add_parser("path", help="Print the skill-requests directory")
+
     def cmd_skills(args):
+        action = getattr(args, "skills_action", None)
         # Route 'config' action to skills_config module
-        if getattr(args, "skills_action", None) == "config":
+        if action == "config":
             _require_tty("skills config")
             from hermes_cli.skills_config import skills_command as skills_config_command
 
             skills_config_command(args)
+        elif action == "proposals":
+            from hermes_cli.skill_proposals import proposals_command
+
+            proposals_command(args)
         else:
             from hermes_cli.skills_hub import skills_command
 
@@ -7707,6 +7744,17 @@ Examples:
     prof_unbind.add_argument("skill", help="Skill name")
     professions_sub.add_parser("rebuild", help="Rebuild PROFESSIONS.md from installed skills")
     professions_sub.add_parser("path", help="Print the PROFESSIONS.md path")
+    prof_auto = professions_sub.add_parser(
+        "auto",
+        help="Toggle automatic profession routing (first-turn + drift)",
+    )
+    prof_auto.add_argument(
+        "state",
+        nargs="?",
+        choices=["on", "off", "status"],
+        default="status",
+        help="Turn auto-routing on/off or print current status",
+    )
 
     def cmd_professions(args):
         from hermes_cli.professions import professions_command
@@ -7714,6 +7762,68 @@ Examples:
         professions_command(args)
 
     professions_parser.set_defaults(func=cmd_professions)
+
+    # =========================================================================
+    # goals command
+    # =========================================================================
+    goals_parser = subparsers.add_parser(
+        "goals",
+        help="Manage long-term goals (intent above professions)",
+        description="Manage goals stored in ~/.hermes/memories/GOALS.md. Goals are long-term user intent that the brain consults when routing and that professions log progress against.",
+    )
+    goals_sub = goals_parser.add_subparsers(dest="goals_action")
+    goals_sub.add_parser("list", help="List goals grouped by status")
+    g_show = goals_sub.add_parser("show", help="Show one goal")
+    g_show.add_argument("name", help="Goal title or slug")
+    g_use = goals_sub.add_parser(
+        "use",
+        help="Pin an active goal for the brain to prioritize (persistent)",
+    )
+    g_use.add_argument("name", nargs="?", help="Goal slug (omit to show current)")
+    g_use.add_argument("--clear", action="store_true", help="Clear the active-goal pin")
+    g_add = goals_sub.add_parser("add", help="Add a new goal")
+    g_add.add_argument("title", help="Goal title")
+    g_add.add_argument("--description", default="", help="Optional description")
+    g_add.add_argument("--link-profession", default=None, help="Optional profession slug to link immediately")
+    g_add.add_argument("--notes", default="", help="Optional free-form notes")
+    g_update = goals_sub.add_parser("update", help="Update a goal's fields")
+    g_update.add_argument("slug", help="Goal slug")
+    g_update.add_argument("--title", default=None, help="New title")
+    g_update.add_argument("--description", default=None, help="New description")
+    g_update.add_argument("--notes", default=None, help="New notes")
+    g_progress = goals_sub.add_parser("progress", help="Append a progress entry")
+    g_progress.add_argument("slug", help="Goal slug")
+    g_progress.add_argument("note", help="Progress note")
+    g_progress.add_argument("--source", default="", help="Optional source tag (e.g., profession slug)")
+    g_done = goals_sub.add_parser("done", help="Mark goal done")
+    g_done.add_argument("slug", help="Goal slug")
+    g_pause = goals_sub.add_parser("pause", help="Pause a goal")
+    g_pause.add_argument("slug", help="Goal slug")
+    g_resume = goals_sub.add_parser("resume", help="Resume a paused goal (set status=active)")
+    g_resume.add_argument("slug", help="Goal slug")
+    g_linkp = goals_sub.add_parser("link-profession", help="Link a profession to a goal")
+    g_linkp.add_argument("slug", help="Goal slug")
+    g_linkp.add_argument("profession", help="Profession slug")
+    g_unlinkp = goals_sub.add_parser("unlink-profession", help="Unlink a profession from a goal")
+    g_unlinkp.add_argument("slug", help="Goal slug")
+    g_unlinkp.add_argument("profession", help="Profession slug")
+    g_linkr = goals_sub.add_parser("link-routine", help="Link a cron routine to a goal")
+    g_linkr.add_argument("slug", help="Goal slug")
+    g_linkr.add_argument("cron_id", help="Cron job ID")
+    g_unlinkr = goals_sub.add_parser("unlink-routine", help="Unlink a cron routine from a goal")
+    g_unlinkr.add_argument("slug", help="Goal slug")
+    g_unlinkr.add_argument("cron_id", help="Cron job ID")
+    g_delete = goals_sub.add_parser("delete", help="Delete a goal")
+    g_delete.add_argument("slug", help="Goal slug")
+    goals_sub.add_parser("summary", help="Print the compact active-goals summary passed to the brain")
+    goals_sub.add_parser("path", help="Print the GOALS.md path")
+
+    def cmd_goals(args):
+        from hermes_cli.goals import goals_command
+
+        goals_command(args)
+
+    goals_parser.set_defaults(func=cmd_goals)
 
     # =========================================================================
     # plugins command

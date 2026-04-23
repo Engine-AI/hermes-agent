@@ -13,7 +13,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from hermes_constants import get_hermes_home, get_skills_dir, is_wsl
-from typing import Optional
+from typing import Iterable, Optional
 
 from agent.skill_utils import (
     extract_skill_conditions,
@@ -440,7 +440,29 @@ CONTEXT_TRUNCATE_TAIL_RATIO = 0.2
 _SKILLS_PROMPT_CACHE_MAX = 8
 _SKILLS_PROMPT_CACHE: OrderedDict[tuple, str] = OrderedDict()
 _SKILLS_PROMPT_CACHE_LOCK = threading.Lock()
-_SKILLS_SNAPSHOT_VERSION = 1
+# v2: snapshot entries carry ``is_common`` so cold-start routes _common/* into
+# the always-visible common section without re-walking the tree.
+_SKILLS_SNAPSHOT_VERSION = 2
+
+# Skills under this top-level category are surfaced to every profession
+# (infrastructure skills like file-read, web-search, shell). The leading
+# underscore keeps them out of the "promote to profession" default flow.
+_COMMON_SKILLS_CATEGORY = "_common"
+
+
+def _is_common_category(category: str) -> bool:
+    if not category:
+        return False
+    return category == _COMMON_SKILLS_CATEGORY or category.startswith(f"{_COMMON_SKILLS_CATEGORY}/")
+
+
+def _display_category(category: str) -> str:
+    """Render-friendly label; strips the leading underscore from ``_common``."""
+    if category == _COMMON_SKILLS_CATEGORY:
+        return "common"
+    if category.startswith(f"{_COMMON_SKILLS_CATEGORY}/"):
+        return "common/" + category[len(_COMMON_SKILLS_CATEGORY) + 1 :]
+    return category
 
 
 def _skills_prompt_snapshot_path() -> Path:
@@ -535,6 +557,7 @@ def _build_snapshot_entry(
         "description": description,
         "platforms": [str(p).strip() for p in platforms if str(p).strip()],
         "conditions": extract_skill_conditions(frontmatter),
+        "is_common": _is_common_category(category),
     }
 
 
@@ -595,6 +618,8 @@ def _skill_should_show(
 def build_skills_system_prompt(
     available_tools: "set[str] | None" = None,
     available_toolsets: "set[str] | None" = None,
+    *,
+    borrowed_skills: "Optional[Iterable[str]]" = None,
 ) -> str:
     """Build a compact skill index for the system prompt.
 
@@ -609,6 +634,11 @@ def build_skills_system_prompt(
     scanned alongside the local ``~/.hermes/skills/`` directory.  External dirs
     are read-only — they appear in the index but new skills are always created
     in the local dir.  Local skills take precedence when names collide.
+
+    ``borrowed_skills`` (optional) names skills borrowed from a sibling
+    profession for this turn — they render in a dedicated ``<borrowed_skills>``
+    section with full descriptions, regardless of the active profession's
+    skill list.
     """
     skills_dir = get_skills_dir()
     external_dirs = get_all_skills_dirs()[1:]  # skip local (index 0)
@@ -626,21 +656,9 @@ def build_skills_system_prompt(
         or ""
     )
     disabled = get_disabled_skill_names()
-    cache_key = (
-        str(skills_dir.resolve()),
-        tuple(str(d) for d in external_dirs),
-        tuple(sorted(str(t) for t in (available_tools or set()))),
-        tuple(sorted(str(ts) for ts in (available_toolsets or set()))),
-        _platform_hint,
-        tuple(sorted(disabled)),
-    )
-    with _SKILLS_PROMPT_CACHE_LOCK:
-        cached = _SKILLS_PROMPT_CACHE.get(cache_key)
-        if cached is not None:
-            _SKILLS_PROMPT_CACHE.move_to_end(cache_key)
-            return cached
 
-    disabled = get_disabled_skill_names()
+    # Resolve active profession BEFORE cache key — switching profession must
+    # miss the cache and trigger a rebuild with the new skill filter.
     active_profession_slug = ""
     active_profession_skills: set[str] = set()
     active_profession_name = ""
@@ -655,6 +673,50 @@ def build_skills_system_prompt(
                 active_profession_skills = set(active_profession.get("skills") or [])
     except Exception:
         pass
+
+    # Two-layer filtering only fires when professions.auto_route is on.
+    # Otherwise we fall back to the legacy "full index, asterisk-priority"
+    # rendering so existing users see no behavior change.
+    two_layer_enabled = False
+    try:
+        from hermes_cli.config import load_config
+        _cfg = load_config() or {}
+        _prof_cfg = _cfg.get("professions", {}) if isinstance(_cfg, dict) else {}
+        two_layer_enabled = bool(isinstance(_prof_cfg, dict) and _prof_cfg.get("auto_route"))
+    except Exception:
+        pass
+
+    borrowed_set: "frozenset[str]" = frozenset(
+        str(s).strip() for s in (borrowed_skills or ()) if str(s).strip()
+    )
+
+    # Goals hash + common skill count participate in the cache key so any
+    # change invalidates deterministically (goals only matters when
+    # goals.inject_into_prompt=True, otherwise it returns "" and is a no-op).
+    _goals_hash_val = ""
+    try:
+        from tools.goals_tool import goals_hash as _goals_hash
+        _goals_hash_val = _goals_hash()
+    except Exception:
+        pass
+
+    cache_key = (
+        str(skills_dir.resolve()),
+        tuple(str(d) for d in external_dirs),
+        tuple(sorted(str(t) for t in (available_tools or set()))),
+        tuple(sorted(str(ts) for ts in (available_toolsets or set()))),
+        _platform_hint,
+        tuple(sorted(disabled)),
+        active_profession_slug,
+        bool(two_layer_enabled and active_profession_skills),
+        tuple(sorted(borrowed_set)),
+        _goals_hash_val,
+    )
+    with _SKILLS_PROMPT_CACHE_LOCK:
+        cached = _SKILLS_PROMPT_CACHE.get(cache_key)
+        if cached is not None:
+            _SKILLS_PROMPT_CACHE.move_to_end(cache_key)
+            return cached
 
     # ── Layer 2: disk snapshot ────────────────────────────────────────
     snapshot = _load_skills_snapshot(skills_dir)
@@ -785,7 +847,18 @@ def build_skills_system_prompt(
     if not skills_by_category:
         result = ""
     else:
-        index_lines = []
+        # Decide whether to render the compact two-layer index (profession
+        # skills get full descriptions; everything else gets name-only) or
+        # fall back to the legacy full-detail index with '*' priority marks.
+        use_two_layer = bool(
+            two_layer_enabled and active_profession_slug and active_profession_skills
+        )
+
+        index_lines: list[str] = []
+        common_lines: list[str] = []
+        borrowed_lines: list[str] = []
+        other_lines: list[str] = []
+
         if active_profession_slug:
             if active_profession_skills:
                 index_lines.append(
@@ -794,28 +867,110 @@ def build_skills_system_prompt(
                 )
             else:
                 index_lines.append(f"  active_profession: {active_profession_name}")
+
         for category in sorted(skills_by_category.keys()):
             cat_desc = category_descriptions.get(category, "")
-            if cat_desc:
-                index_lines.append(f"  {category}: {cat_desc}")
-            else:
-                index_lines.append(f"  {category}:")
+            display_cat = _display_category(category)
+            is_common = _is_common_category(category)
             # Deduplicate and sort skills within each category
-            seen = set()
+            seen: set[str] = set()
             sorted_skills = sorted(
                 skills_by_category[category],
                 key=lambda x: (0 if x[0] in active_profession_skills else 1, x[0]),
             )
+
+            in_skills: list[tuple[str, str]] = []
+            common_skills: list[tuple[str, str]] = []
+            borrowed_skills_in_cat: list[tuple[str, str]] = []
+            out_skills: list[tuple[str, str]] = []
             for name, desc in sorted_skills:
                 if name in seen:
                     continue
                 seen.add(name)
-                if desc:
-                    prefix = "* " if name in active_profession_skills else "- "
-                    index_lines.append(f"    {prefix}{name}: {desc}")
+                # Common skills are ALWAYS visible with full description,
+                # regardless of active profession.
+                if is_common:
+                    common_skills.append((name, desc))
+                    continue
+                # Borrowed skills are surfaced in a dedicated section when
+                # two-layer filtering is active; they bypass the "other" index.
+                if name in borrowed_set:
+                    borrowed_skills_in_cat.append((name, desc))
+                    continue
+                if use_two_layer and name not in active_profession_skills:
+                    out_skills.append((name, desc))
                 else:
-                    prefix = "* " if name in active_profession_skills else "- "
-                    index_lines.append(f"    {prefix}{name}")
+                    in_skills.append((name, desc))
+
+            if in_skills:
+                if cat_desc:
+                    index_lines.append(f"  {display_cat}: {cat_desc}")
+                else:
+                    index_lines.append(f"  {display_cat}:")
+                for name, desc in in_skills:
+                    if desc:
+                        prefix = "* " if name in active_profession_skills else "- "
+                        index_lines.append(f"    {prefix}{name}: {desc}")
+                    else:
+                        prefix = "* " if name in active_profession_skills else "- "
+                        index_lines.append(f"    {prefix}{name}")
+
+            if common_skills:
+                if cat_desc:
+                    common_lines.append(f"  {display_cat}: {cat_desc}")
+                else:
+                    common_lines.append(f"  {display_cat}:")
+                for name, desc in common_skills:
+                    if desc:
+                        common_lines.append(f"    - {name}: {desc}")
+                    else:
+                        common_lines.append(f"    - {name}")
+
+            if borrowed_skills_in_cat:
+                if cat_desc:
+                    borrowed_lines.append(f"  {display_cat}: {cat_desc}")
+                else:
+                    borrowed_lines.append(f"  {display_cat}:")
+                for name, desc in borrowed_skills_in_cat:
+                    if desc:
+                        borrowed_lines.append(f"    + {name}: {desc}")
+                    else:
+                        borrowed_lines.append(f"    + {name}")
+
+            if use_two_layer and out_skills:
+                other_lines.append(f"  {display_cat}: " + ", ".join(n for n, _ in out_skills))
+
+        common_block = ""
+        if common_lines:
+            common_block = (
+                "\n<common_skills>\n"
+                "Common skills (always available — infrastructure like file I/O, "
+                "web search, shell). Use these alongside the active profession's skills "
+                "as needed.\n"
+                + "\n".join(common_lines) + "\n"
+                "</common_skills>\n"
+            )
+
+        borrowed_block = ""
+        if borrowed_lines:
+            borrowed_block = (
+                "\n<borrowed_skills>\n"
+                "Borrowed from sibling professions for this turn. "
+                "Treat them as first-class alongside the active profession's skills.\n"
+                + "\n".join(borrowed_lines) + "\n"
+                "</borrowed_skills>\n"
+            )
+
+        if use_two_layer and other_lines:
+            other_block = (
+                "\n<other_skills_index>\n"
+                "These skills are not part of the active profession. Load them with "
+                "skill_view(name) when the active profession's skills do not fit the task.\n"
+                + "\n".join(other_lines) + "\n"
+                "</other_skills_index>\n"
+            )
+        else:
+            other_block = ""
 
         result = (
             "## Skills (mandatory)\n"
@@ -837,6 +992,9 @@ def build_skills_system_prompt(
             "<available_skills>\n"
             + "\n".join(index_lines) + "\n"
             "</available_skills>\n"
+            + common_block
+            + borrowed_block
+            + other_block +
             "\n"
             "Only proceed without loading a skill if genuinely none are relevant to the task."
         )

@@ -5484,6 +5484,99 @@ class HermesCLI:
             print("  Usage: /personality <name>")
             print()
     
+    def _handle_goal_command(self, cmd: str):
+        """Handle the /goal REPL command.
+
+        Usage:
+          /goal                 Show current pinned goal for this session.
+          /goal list            List all active goals.
+          /goal <slug>          Pin a goal for this session (env-scoped, not persisted).
+          /goal clear           Clear the session pin.
+        """
+        import os as _os
+        parts = cmd.split(maxsplit=1)
+
+        try:
+            from tools.goals_tool import get_active_goal_slug, get_goal, list_goals, slugify_goal
+        except Exception as e:
+            print(f"(._.) Goals module unavailable: {e}")
+            return
+
+        # No argument → show current pin.
+        if len(parts) <= 1:
+            current = get_active_goal_slug()
+            if not current:
+                print("(._.) No goal pinned for this session.")
+                print("  Usage:")
+                print("    /goal <slug>   — pin a goal for this session")
+                print("    /goal list     — list active goals")
+                print("    /goal clear    — clear the session pin")
+                return
+            g = get_goal(current)
+            label = (g or {}).get("title") or current
+            origin = "session" if _os.environ.get("HERMES_SESSION_GOAL") else "config"
+            print(f"(^_^) Active goal ({origin}): {label}  [{current}]")
+            return
+
+        arg = parts[1].strip()
+
+        if arg.lower() == "list":
+            goals = [g for g in list_goals() if g.get("status") == "active"]
+            if not goals:
+                print("(._.) No active goals.")
+                return
+            current = get_active_goal_slug()
+            print()
+            print("  Active goals:")
+            for g in goals:
+                pin = " ★" if g.get("slug") == current else ""
+                title = g.get("title") or g.get("slug")
+                print(f"  - {title}{pin}  [{g.get('slug')}]")
+            print()
+            return
+
+        if arg.lower() == "clear":
+            if _os.environ.pop("HERMES_SESSION_GOAL", None):
+                self._invalidate_agent_system_prompt()
+                print("(^_^)b Session goal pin cleared.")
+            else:
+                print("(._.) No session pin to clear.")
+                print("  (the persistent pin in config.yaml is not affected — use `hermes goals use --clear` for that)")
+            return
+
+        # Treat remainder as slug/title.
+        entry = get_goal(arg)
+        if not entry:
+            print(f"(._.) Goal not found: {arg}")
+            return
+        if entry.get("status") != "active":
+            print(
+                f"(._.) Goal '{entry.get('title') or entry.get('slug')}' is "
+                f"{entry.get('status')}, not active. Resume it first with "
+                f"`hermes goals resume {entry.get('slug')}`."
+            )
+            return
+        _os.environ["HERMES_SESSION_GOAL"] = entry["slug"]
+        self._invalidate_agent_system_prompt()
+        print(f"(^_^)b Pinned goal for this session: {entry.get('title') or entry.get('slug')}  [{entry['slug']}]")
+
+    def _invalidate_agent_system_prompt(self):
+        """Best-effort: nudge the next turn to rebuild system prompt + brain context.
+
+        Pinning a goal mid-session should take effect on the next user turn.
+        We invalidate the skills prompt cache AND any per-agent cached prompt.
+        """
+        try:
+            from agent.prompt_builder import clear_skills_system_prompt_cache
+            clear_skills_system_prompt_cache()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "agent", None) is not None and hasattr(self.agent, "_invalidate_system_prompt"):
+                self.agent._invalidate_system_prompt()
+        except Exception:
+            pass
+
     def _handle_cron_command(self, cmd: str):
         """Handle the /cron command to manage scheduled tasks."""
         import shlex
@@ -5954,6 +6047,8 @@ class HermesCLI:
         elif canonical == "personality":
             # Use original case (handler lowercases the personality name itself)
             self._handle_personality_command(cmd_original)
+        elif canonical == "goal":
+            self._handle_goal_command(cmd_original)
         elif canonical == "plan":
             self._handle_plan_command(cmd_original)
         elif canonical == "retry":
@@ -10754,6 +10849,7 @@ def main(
     w: bool = False,
     checkpoints: bool = False,
     pass_session_id: bool = False,
+    goal: str = None,
 ):
     """
     Hermes Agent CLI - Interactive AI Assistant
@@ -10849,6 +10945,31 @@ def main(
         toolsets_list = sorted(_get_platform_tools(CLI_CONFIG, "cli"))
     
     parsed_skills = _parse_skills_argument(skills)
+
+    # --goal: session-scoped active goal pin. Validated up-front so a typo
+    # fails fast instead of silently doing nothing. Exported as env var so
+    # the brain's ``summarize_active()`` picks it up without plumbing a new
+    # kwarg through the whole agent stack.
+    if goal:
+        try:
+            from tools.goals_tool import get_goal, slugify_goal
+            entry = get_goal(goal)
+            if not entry:
+                print(f"Error: goal not found: {goal}")
+                sys.exit(1)
+            if entry.get("status") != "active":
+                print(
+                    f"Error: goal '{entry.get('title') or entry.get('slug')}' is "
+                    f"{entry.get('status')}, not active. "
+                    f"Resume it first: hermes goals resume {entry.get('slug')}"
+                )
+                sys.exit(1)
+            os.environ["HERMES_SESSION_GOAL"] = entry["slug"]
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"Error: failed to pin goal '{goal}': {e}")
+            sys.exit(1)
 
     # Create CLI instance
     cli = HermesCLI(
