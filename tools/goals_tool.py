@@ -240,7 +240,12 @@ def create_goal(
     entries = list_goals()
     entries.append(entry)
     _save_entries(entries)
-    return {"success": True, **entry}
+    auto_created: List[str] = []
+    for prof_slug in entry["linked_professions"]:
+        created = _ensure_profession_exists(prof_slug, goal_title=title)
+        if created:
+            auto_created.append(created)
+    return {"success": True, "auto_created_professions": auto_created, **entry}
 
 
 def update_goal(slug: str, **fields: Any) -> Dict[str, Any]:
@@ -309,7 +314,13 @@ def link_profession(goal_slug: str, profession_slug: str) -> Dict[str, Any]:
             item["linked_professions"] = sorted(dict.fromkeys(linked))
             item["updated_at"] = _utcnow_iso()
             _save_entries(entries)
-        return {"success": True, "slug": item["slug"], "linked_professions": item["linked_professions"]}
+        created = _ensure_profession_exists(profession_slug, goal_title=item.get("title", ""))
+        return {
+            "success": True,
+            "slug": item["slug"],
+            "linked_professions": item["linked_professions"],
+            "auto_created_professions": [created] if created else [],
+        }
     return {"success": False, "error": f"Goal not found: {goal_slug}"}
 
 
@@ -383,6 +394,40 @@ def _load_goals_cfg() -> Dict[str, Any]:
         return goals_cfg if isinstance(goals_cfg, dict) else {}
     except Exception:
         return {}
+
+
+def _auto_create_profession_enabled() -> bool:
+    cfg = _load_goals_cfg()
+    return bool(cfg.get("auto_create_profession", False))
+
+
+def _ensure_profession_exists(
+    profession_slug: str,
+    *,
+    goal_title: str = "",
+) -> Optional[str]:
+    """If the auto-create flag is on and the profession slug doesn't exist,
+    create a minimal PROFESSIONS.md entry. Returns the created slug, or None
+    if nothing was created (flag off, slug empty, or profession already exists).
+
+    Lazy-imports professions_tool to avoid a module-load cycle.
+    """
+    profession_slug = (profession_slug or "").strip()
+    if not profession_slug:
+        return None
+    if not _auto_create_profession_enabled():
+        return None
+    try:
+        from tools.professions_tool import auto_create_profession, get_profession
+    except Exception:
+        return None
+    if get_profession(profession_slug):
+        return None
+    desc = f"Auto-created from goal: {goal_title}" if goal_title else "Auto-created from goal."
+    result = auto_create_profession(profession_slug, description=desc)
+    if result.get("success") and result.get("created"):
+        return result.get("slug") or profession_slug
+    return None
 
 
 # Env var used by `hermes chat --goal` and the in-REPL `/goal` command to pin

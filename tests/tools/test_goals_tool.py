@@ -231,6 +231,74 @@ class TestActiveGoalPin:
         assert get_active_goal_slug() == ""
 
 
+class TestAutoCreateProfession:
+    """Opt-in: goals.auto_create_profession bridges goal -> PROFESSIONS.md."""
+
+    def _set_flag(self, value: bool) -> None:
+        cfg = load_config()
+        cfg.setdefault("goals", {})["auto_create_profession"] = value
+        save_config(cfg)
+
+    def test_disabled_by_default(self):
+        # Flag off (or unset) → no profession is created when linking unknown.
+        from tools.professions_tool import get_profession
+
+        # Don't touch the flag at all — must default to off.
+        result = create_goal("Bridge off", linked_professions=["ghost-prof"])
+        assert result["success"] is True
+        assert result.get("auto_created_professions") == []
+        assert get_profession("ghost-prof") is None
+
+    def test_create_goal_auto_creates_profession_when_enabled(self):
+        from tools.professions_tool import get_profession
+
+        self._set_flag(True)
+        result = create_goal(
+            "Build half marathon",
+            linked_professions=["fitness-coach"],
+            description="12-week plan",
+        )
+        assert result["success"] is True
+        assert result["auto_created_professions"] == ["fitness-coach"]
+        prof = get_profession("fitness-coach")
+        assert prof is not None
+        assert "Build half marathon" in (prof.get("description") or "")
+
+    def test_existing_profession_not_recreated(self):
+        from tools.professions_tool import auto_create_profession, get_profession
+
+        self._set_flag(True)
+        # Pre-create with a custom description so we can detect overwrite.
+        auto_create_profession("accountant", description="hand-curated")
+        result = create_goal("Tax season", linked_professions=["accountant"])
+        assert result["success"] is True
+        assert result["auto_created_professions"] == []
+        prof = get_profession("accountant")
+        assert prof is not None
+        assert prof.get("description") == "hand-curated"
+
+    def test_link_profession_auto_creates_when_enabled(self):
+        from tools.professions_tool import get_profession
+
+        self._set_flag(True)
+        create_goal("Linker")  # no initial professions
+        result = link_profession("linker", "nutrition-advisor")
+        assert result["success"] is True
+        assert result.get("auto_created_professions") == ["nutrition-advisor"]
+        assert get_profession("nutrition-advisor") is not None
+
+    def test_link_profession_no_create_when_disabled(self):
+        from tools.professions_tool import get_profession
+
+        # Flag explicitly off.
+        self._set_flag(False)
+        create_goal("Linker off")
+        result = link_profession("linker-off", "no-such-prof")
+        assert result["success"] is True
+        assert result.get("auto_created_professions") == []
+        assert get_profession("no-such-prof") is None
+
+
 class TestSummarizeWithPin:
     def _setup(self):
         cfg = load_config()

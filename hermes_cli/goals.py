@@ -120,6 +120,8 @@ def goals_command(args) -> None:
                 print(color(f"  {result.get('error', 'add failed')}", Colors.YELLOW))
             return
         print(color(f"  Added goal: {result.get('title')} ({result.get('slug')})", Colors.GREEN))
+        for prof in result.get("auto_created_professions") or []:
+            print(color(f"  Auto-created profession: {prof}", Colors.DIM))
         return
 
     if action == "update":
@@ -178,6 +180,8 @@ def goals_command(args) -> None:
             print(color(f"  {result.get('error', 'link failed')}", Colors.YELLOW))
             return
         print(color(f"  Linked profession '{args.profession}' to {result.get('slug')}.", Colors.GREEN))
+        for prof in result.get("auto_created_professions") or []:
+            print(color(f"  Auto-created profession: {prof}", Colors.DIM))
         return
 
     if action == "unlink-profession":
