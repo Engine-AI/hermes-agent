@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ChangeListManager">
+    <list default="true" id="04264fce-aed2-4ea8-8b4b-add0050b7c47" name="Changes" comment="add: 添加goals">
+      <change beforePath="$PROJECT_DIR$/agent/agent_init.py" beforeDir="false" afterPath="$PROJECT_DIR$/agent/agent_init.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/agent/auxiliary_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/agent/auxiliary_client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/agent/conversation_loop.py" beforeDir="false" afterPath="$PROJECT_DIR$/agent/conversation_loop.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/agent/prompt_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/agent/prompt_builder.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/agent/system_prompt.py" beforeDir="false" afterPath="$PROJECT_DIR$/agent/system_prompt.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/hermes_cli/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/hermes_cli/config.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/hermes_cli/doctor.py" beforeDir="false" afterPath="$PROJECT_DIR$/hermes_cli/doctor.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/hermes_cli/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/hermes_cli/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/hermes_cli/profiles.py" beforeDir="false" afterPath="$PROJECT_DIR$/hermes_cli/profiles.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/hermes_cli/skills_hub.py" beforeDir="false" afterPath="$PROJECT_DIR$/hermes_cli/skills_hub.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/run_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/run_agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/tools/test_memory_tool_schema.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/tools/test_memory_tool_schema.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tools/memory_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/memory_tool.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tools/skill_manager_tool.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/skill_manager_tool.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Merge.Settings">
+    <option name="BRANCH" value="main" />
+  </component>
+  <component name="Git.Rebase.Settings">
+    <option name="NEW_BASE" value="origin/main" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="ROOT_SYNC" value="DONT_SYNC" />
+  </component>
+  <component name="GithubDefaultAccount">
+    <option name="defaultAccountId" value="01a51876-659e-4f83-b48a-65e243d8c295" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 8,
+  &quot;fromUser&quot;: false
+}</component>
+  <component name="ProjectId" id="3C9ibzfUT6Y0fhyRMT25SLLF4V3" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "git-widget-placeholder": "profession-hermes",
+    "git.auto.fetch.suggestion.counter": "3",
+    "node.js.detected.package.eslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "http.proxy",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-31caf2ab9e3c-JavaScript-PY-261.24374.152" />
+        <option value="bundled-python-sdk-c59985aa861c-c2ffad84badb-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-261.24374.152" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SvnConfiguration">
+    <configuration>$USER_HOME$/.subversion</configuration>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="04264fce-aed2-4ea8-8b4b-add0050b7c47" name="Changes" comment="" />
+      <created>1775804263208</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1775804263208</updated>
+      <workItem from="1775804264331" duration="51148000" />
+      <workItem from="1776329313243" duration="5128000" />
+      <workItem from="1776754937375" duration="8139000" />
+      <workItem from="1776843045606" duration="12622000" />
+      <workItem from="1776937513139" duration="204000" />
+      <workItem from="1776937854182" duration="1216000" />
+      <workItem from="1776941423124" duration="4997000" />
+      <workItem from="1777279800130" duration="4660000" />
+      <workItem from="1777445657983" duration="3041000" />
+      <workItem from="1778311900951" duration="424000" />
+      <workItem from="1778471354555" duration="8124000" />
+      <workItem from="1778750347086" duration="3435000" />
+      <workItem from="1779277154856" duration="2878000" />
+      <workItem from="1780383675158" duration="218000" />
+      <workItem from="1780647041418" duration="4193000" />
+      <workItem from="1780652107978" duration="2923000" />
+    </task>
+    <task id="LOCAL-00001" summary="feat: add profession management and memory integration&#10;&#10;- Introduced support for managing professions through a new command in the CLI, allowing users to list, show, use, rate, and provide feedback on professions.&#10;- Updated memory management to include a new PROFESSIONS.md file, which stores profession definitions and their associated skills.&#10;- Enhanced the AIAgent and BuiltinMemoryProvider classes to handle profession profiles, enabling the agent to utilize profession-specific information in its memory.&#10;- Implemented changes in the memory tool to support adding and retrieving profession entries.&#10;- Added tests to ensure proper functionality of the new profession features and their integration with existing memory management.&#10;&#10;This update enhances the agent's capabilities by allowing it to manage and utilize profession-related data effectively.">
+      <option name="closed" value="true" />
+      <created>1775825470841</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1775825470841</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="OPEN_GENERIC_TABS">
+      <map>
+        <entry key="a1d807aa-3da4-47f1-b98e-87c06b7b9209" value="TOOL_WINDOW" />
+        <entry key="529bcbc2-b7b2-4e83-97bc-3947eff641fa" value="TOOL_WINDOW" />
+        <entry key="8fcdc441-f235-45d0-aea0-b7791e82122f" value="TOOL_WINDOW" />
+        <entry key="5f36b034-96be-4ecc-96fa-8e9581761790" value="TOOL_WINDOW" />
+        <entry key="65d8ad68-4f8c-436b-8ae6-cac24d114cdb" value="TOOL_WINDOW" />
+        <entry key="ddf488e5-3afc-4357-a5a8-37ecec6115de" value="TOOL_WINDOW" />
+        <entry key="0afae9f3-8f90-4df5-87ce-912d2e43e775" value="TOOL_WINDOW" />
+      </map>
+    </option>
+    <option name="RECENT_FILTERS">
+      <map>
+        <entry key="User">
+          <value>
+            <list>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="*" />
+                </option>
+              </RecentGroup>
+            </list>
+          </value>
+        </entry>
+      </map>
+    </option>
+    <option name="TAB_STATES">
+      <map>
+        <entry key="0afae9f3-8f90-4df5-87ce-912d2e43e775">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="HEAD" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="roots">
+                    <value>
+                      <list>
+                        <option value="$PROJECT_DIR$" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="user">
+                    <value>
+                      <list>
+                        <option value="*" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+              <option name="SHOW_ONLY_AFFECTED_CHANGES" value="true" />
+            </State>
+          </value>
+        </entry>
+        <entry key="529bcbc2-b7b2-4e83-97bc-3947eff641fa">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="HEAD" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="roots">
+                    <value>
+                      <list>
+                        <option value="$PROJECT_DIR$" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="user">
+                    <value>
+                      <list>
+                        <option value="*" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+        <entry key="5f36b034-96be-4ecc-96fa-8e9581761790">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="HEAD" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="roots">
+                    <value>
+                      <list>
+                        <option value="$PROJECT_DIR$" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="user">
+                    <value>
+                      <list>
+                        <option value="*" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+              <option name="SHOW_ONLY_AFFECTED_CHANGES" value="true" />
+            </State>
+          </value>
+        </entry>
+        <entry key="65d8ad68-4f8c-436b-8ae6-cac24d114cdb">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="HEAD" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="roots">
+                    <value>
+                      <list>
+                        <option value="$PROJECT_DIR$" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="user">
+                    <value>
+                      <list>
+                        <option value="*" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+              <option name="SHOW_ONLY_AFFECTED_CHANGES" value="true" />
+            </State>
+          </value>
+        </entry>
+        <entry key="8fcdc441-f235-45d0-aea0-b7791e82122f">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="HEAD" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="roots">
+                    <value>
+                      <list>
+                        <option value="$PROJECT_DIR$" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="user">
+                    <value>
+                      <list>
+                        <option value="*" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+              <option name="SHOW_ONLY_AFFECTED_CHANGES" value="true" />
+            </State>
+          </value>
+        </entry>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="user">
+                    <value>
+                      <list>
+                        <option value="*" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+        <entry key="a1d807aa-3da4-47f1-b98e-87c06b7b9209">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="HEAD" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="roots">
+                    <value>
+                      <list>
+                        <option value="$PROJECT_DIR$" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="user">
+                    <value>
+                      <list>
+                        <option value="*" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+              <option name="SHOW_ONLY_AFFECTED_CHANGES" value="true" />
+            </State>
+          </value>
+        </entry>
+        <entry key="ddf488e5-3afc-4357-a5a8-37ecec6115de">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="HEAD" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="roots">
+                    <value>
+                      <list>
+                        <option value="$PROJECT_DIR$" />
+                      </list>
+                    </value>
+                  </entry>
+                  <entry key="user">
+                    <value>
+                      <list>
+                        <option value="*" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+              <option name="SHOW_ONLY_AFFECTED_CHANGES" value="true" />
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="feat: add profession management and memory integration&#10;&#10;- Introduced support for managing professions through a new command in the CLI, allowing users to list, show, use, rate, and provide feedback on professions.&#10;- Updated memory management to include a new PROFESSIONS.md file, which stores profession definitions and their associated skills.&#10;- Enhanced the AIAgent and BuiltinMemoryProvider classes to handle profession profiles, enabling the agent to utilize profession-specific information in its memory.&#10;- Implemented changes in the memory tool to support adding and retrieving profession entries.&#10;- Added tests to ensure proper functionality of the new profession features and their integration with existing memory management.&#10;&#10;This update enhances the agent's capabilities by allowing it to manage and utilize profession-related data effectively." />
+    <option name="LAST_COMMIT_MESSAGE" value="feat: add profession management and memory integration&#10;&#10;- Introduced support for managing professions through a new command in the CLI, allowing users to list, show, use, rate, and provide feedback on professions.&#10;- Updated memory management to include a new PROFESSIONS.md file, which stores profession definitions and their associated skills.&#10;- Enhanced the AIAgent and BuiltinMemoryProvider classes to handle profession profiles, enabling the agent to utilize profession-specific information in its memory.&#10;- Implemented changes in the memory tool to support adding and retrieving profession entries.&#10;- Added tests to ensure proper functionality of the new profession features and their integration with existing memory management.&#10;&#10;This update enhances the agent's capabilities by allowing it to manage and utilize profession-related data effectively." />
+  </component>
+</project>
