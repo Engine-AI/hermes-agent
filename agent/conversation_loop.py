@@ -582,8 +582,24 @@ def run_conversation(
     # from disk that the model already knows about (it wrote them!),
     # producing a different system prompt and breaking the Anthropic
     # prefix cache.
+    # ── Brain: profession routing (gated by professions.auto_route) ──
+    # Runs before the system prompt is assembled so a switch/borrow this turn
+    # is reflected in the skills + profession blocks. Passive when disabled.
+    _prof_prompt_dirty = _run_profession_router(agent, user_message, messages)
+
     if agent._cached_system_prompt is None:
         _restore_or_build_system_prompt(agent, system_message, conversation_history)
+    elif _prof_prompt_dirty:
+        # A mid-session profession change altered the (otherwise stable)
+        # skills/profession blocks. Rebuild fresh instead of reusing the
+        # now-stale cached/DB prompt, and persist so the next turn's prefix
+        # cache matches the new prompt.
+        agent._cached_system_prompt = agent._build_system_prompt(system_message)
+        if agent._session_db:
+            try:
+                agent._session_db.update_system_prompt(agent.session_id, agent._cached_system_prompt)
+            except Exception:
+                pass
 
     active_system_prompt = agent._cached_system_prompt
 
@@ -4804,6 +4820,11 @@ def run_conversation(
         except Exception:
             pass  # Background review is best-effort
 
+    # Brain: auto-record a solved case for the active profession after a
+    # completed (non-interrupted) turn. Gated by professions.auto_route.
+    if final_response and not interrupted:
+        _record_profession_solved(agent, original_user_message, final_response, completed)
+
     # Note: Memory provider on_session_end() + shutdown_all() are NOT
     # called here — run_conversation() is called once per user message in
     # multi-turn sessions. Shutting down after every turn would kill the
@@ -4831,6 +4852,134 @@ def run_conversation(
 
     return result
 
+
+# ===========================================================================
+# Profession brain — per-turn routing + auto-record of solved tasks.
+#
+# Both helpers are fully gated by ``professions.auto_route`` and wrapped in
+# try/except so any failure (config, LLM, disk) leaves the conversation
+# untouched. They are no-ops for users who never enable auto-routing.
+# ===========================================================================
+
+
+def _run_profession_router(agent, user_message: str, messages: List[Dict[str, Any]]) -> bool:
+    """Route this turn to the best-fit profession.
+
+    Runs cheap retry-based skill-gap detection every turn, then (on the drift
+    cadence) an LLM router that may stay/switch/create/borrow. Returns True
+    when the active profession or borrowed-skill set changed, so the caller
+    knows to rebuild the (otherwise stable) system prompt this turn.
+    """
+    try:
+        from tools import professions_tool as _pt
+        if not _pt.professions_auto_route_enabled():
+            return False
+        from agent import profession_router as _pr
+    except Exception:
+        return False
+
+    session_id = getattr(agent, "session_id", "") or ""
+    try:
+        active_slug_pre = _pt.get_active_profession_slug()
+    except Exception:
+        active_slug_pre = ""
+
+    # 1. Retry-based skill-gap detection (no LLM; every turn).
+    try:
+        gap = _pr.record_turn_for_gap_detection(active_slug_pre, user_message)
+        if gap and gap.get("intent"):
+            from tools.skill_proposals_tool import create_proposal
+            create_proposal(
+                intent=str(gap["intent"])[:300],
+                requesting_profession=active_slug_pre,
+                created_by="brain",
+                failed_attempts=1,
+            )
+    except Exception:
+        pass
+
+    # 2. Drift gate — first turn + every drift_check_interval turns.
+    try:
+        if not _pr.should_route(getattr(agent, "_user_turn_count", 0), active_slug_pre):
+            return False
+    except Exception:
+        return False
+
+    # 3. Route + apply.
+    try:
+        recent: List[Dict[str, str]] = []
+        for m in messages[-7:-1]:  # exclude the just-appended user message
+            role = m.get("role")
+            content = m.get("content")
+            if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                recent.append({"role": role, "content": content})
+        recent = recent[-3:]
+        decision = _pr.route(user_message, recent_turns=recent, session_id=session_id)
+        applied = _pr.apply_decision(decision)
+    except Exception:
+        return False
+
+    # 4. React — return True when the system prompt must be rebuilt.
+    dirty = False
+    try:
+        if applied.get("changed"):
+            prior = applied.get("prior_slug") or ""
+            new_slug = applied.get("slug") or ""
+            # Self-score the outgoing profession from the recent conversation.
+            if prior and prior != new_slug:
+                try:
+                    summary = "\n".join(f"{m['role']}: {m['content']}" for m in recent)[:1500]
+                    if summary.strip():
+                        _pt.llm_score_profession(prior, summary)
+                except Exception:
+                    pass
+            # A switch invalidates any borrowed-skill state.
+            agent._active_borrowed_skills_names = ()
+            dirty = True
+            # Reset the per-session router budget on switch when configured.
+            try:
+                from hermes_cli.config import load_config
+                if (load_config().get("brain", {}) or {}).get("reset_on_profession_switch", True):
+                    _pr.reset_brain_budget(session_id)
+            except Exception:
+                pass
+        elif decision.action == "borrow":
+            new_borrow = tuple(
+                sorted(str(s) for s in (applied.get("borrow_skills") or []) if str(s).strip())
+            )
+            if new_borrow != tuple(getattr(agent, "_active_borrowed_skills_names", ()) or ()):
+                agent._active_borrowed_skills_names = new_borrow
+                dirty = True
+        else:
+            # stay — drop any stale borrowed skills from a prior turn.
+            if getattr(agent, "_active_borrowed_skills_names", ()):
+                agent._active_borrowed_skills_names = ()
+                dirty = True
+    except Exception:
+        pass
+    return dirty
+
+
+def _record_profession_solved(agent, user_message: str, final_response, completed: bool) -> None:
+    """Record a solved case against the active profession after a completed turn."""
+    try:
+        from tools.professions_tool import (
+            professions_auto_route_enabled,
+            get_active_profession_slug,
+            solve_profession,
+        )
+        if not professions_auto_route_enabled():
+            return
+        slug = get_active_profession_slug()
+        if not slug:
+            return
+        problem = (user_message or "").strip()[:200]
+        if not problem:
+            return
+        user_id = getattr(agent, "session_id", "") or getattr(agent, "platform", "") or ""
+        solve_profession(slug, problem=problem, user=str(user_id), increment_user=True)
+    except Exception:
+        pass  # Auto-record is best-effort — never block turn completion.
 
 
 __all__ = ["run_conversation"]

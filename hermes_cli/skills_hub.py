@@ -672,6 +672,20 @@ def do_install(identifier: str, category: str = "", force: bool = False,
     c.print(f"[bold green]Installed:[/] {install_dir.relative_to(SKILLS_DIR)}")
     c.print(f"[dim]Files: {', '.join(bundle.files.keys())}[/]\n")
 
+    # Bind the freshly installed skill to matching professions (passive unless
+    # professions.auto_route is enabled).
+    try:
+        from tools.professions_tool import (
+            professions_auto_route_enabled,
+            bind_skill_to_professions,
+        )
+        if professions_auto_route_enabled():
+            _bound = bind_skill_to_professions(install_dir)
+            if _bound:
+                c.print(f"[dim]Bound to professions: {', '.join(_bound)}[/]\n")
+    except Exception:
+        pass
+
     if invalidate_cache:
         # Invalidate the skills prompt cache so the new skill appears immediately
         try:

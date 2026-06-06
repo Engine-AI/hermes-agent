@@ -1327,8 +1327,39 @@ DEFAULT_CONFIG = {
             "timeout": 600,
             "extra_body": {},
         },
+        # Profession brain — routes each turn to the best-fit profession
+        # (stay/switch/create/borrow). Short JSON decision; cheap fast model
+        # recommended. Gated by professions.auto_route (off by default).
+        "profession_routing": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 60,
+            "extra_body": {},
+        },
+        # Profession self-scoring — rates how well the outgoing profession
+        # served the user on switch/end. Short JSON; cheap model fine.
+        "profession_scoring": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 30,
+            "extra_body": {},
+        },
+        # Cross-profession skill binding — decides which existing professions
+        # a new/edited skill should also bind to. Short JSON; cheap model fine.
+        "profession_binding": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 30,
+            "extra_body": {},
+        },
     },
-    
+
     "display": {
         "compact": False,
         "personality": "",
@@ -1641,11 +1672,36 @@ DEFAULT_CONFIG = {
         "user_profile_enabled": True,
         "memory_char_limit": 2200,   # ~800 tokens at 2.75 chars/token
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
+        # Inject the active profession's entry (from PROFESSIONS.md) into the
+        # system prompt as a third memory block. Bounded by profession_char_limit.
+        "profession_profile_enabled": True,
+        "profession_char_limit": 5000,  # profession definitions, skill bindings, feedback summaries
         # External memory provider plugin (empty = built-in only).
         # Set to a provider name to activate: "openviking", "mem0",
         # "hindsight", "holographic", "retaindb", "byterover".
         # Only ONE external provider is allowed at a time.
         "provider": "",
+    },
+
+    # Professions — file-backed service personas (PROFESSIONS.md) with skill
+    # bindings and feedback metrics. The brain router (below) auto-selects the
+    # active profession per turn. Entirely passive while auto_route is False.
+    "professions": {
+        "active": "",                # currently active profession slug
+        "auto_route": False,         # master switch: auto-select profession per query
+        "drift_check_interval": 5,   # after first turn, re-route every N turns
+        "auto_create": True,         # router may create new professions
+        "auto_score": True,          # LLM self-scores professions on switch/end
+        "auto_cross_bind": True,     # LLM-check skill multi-profession bindings on create/edit
+    },
+
+    # Brain — router cost guards for the profession auto-routing loop.
+    "brain": {
+        "budget_per_session": 3,            # max router LLM calls per session (fast-path bypasses this)
+        "reset_on_profession_switch": True, # reset the per-session counter on switch
+        "bloat_soft_cap": 15,               # profession skill count above which brain emits a split proposal
+        "retry_gap_threshold": 3,           # same intent repeated N times → skill-gap signal
+        "proposal_dedup_threshold": 0.75,   # SequenceMatcher ratio above which skill proposals are deduped
     },
 
     # Subagent delegation — override the provider:model used by delegate_task
@@ -3937,7 +3993,7 @@ _KNOWN_ROOT_KEYS = {
     "fallback_providers", "credential_pool_strategies", "toolsets",
     "agent", "terminal", "display", "compression", "delegation",
     "auxiliary", "custom_providers", "context", "memory", "gateway",
-    "sessions", "streaming",
+    "sessions", "streaming", "professions", "brain",
 }
 
 # Valid fields inside a custom_providers list entry

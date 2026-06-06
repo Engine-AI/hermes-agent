@@ -1053,8 +1053,16 @@ def _skill_should_show(
 def build_skills_system_prompt(
     available_tools: "set[str] | None" = None,
     available_toolsets: "set[str] | None" = None,
+    borrowed_skills: "set[str] | None" = None,
 ) -> str:
     """Build a compact skill index for the system prompt.
+
+    When the profession brain is active (``professions.auto_route`` on with an
+    active profession), the index is rendered in two layers: the active
+    profession's bound skills (and ``_common/`` infrastructure skills) in full
+    detail, any ``borrowed_skills`` in a dedicated section, and every other
+    skill as a name-only index to save tokens. When auto-routing is off the
+    original full index is rendered unchanged.
 
     Two-layer cache:
       1. In-process LRU dict keyed by (skills_dir, tools, toolsets)
@@ -1084,6 +1092,35 @@ def build_skills_system_prompt(
         or ""
     )
     disabled = get_disabled_skill_names()
+
+    # ── Profession two-layer gating ───────────────────────────────────
+    # Only active when professions.auto_route is on AND a profession is
+    # selected. Everything below is a no-op otherwise, so the legacy index
+    # (and its rendered output) is preserved bit-for-bit for existing users.
+    two_layer = False
+    active_prof_slug = ""
+    active_prof_skills: "set[str]" = set()
+    borrowed_set = {str(s).strip() for s in (borrowed_skills or ()) if str(s).strip()}
+    try:
+        from tools.professions_tool import (
+            professions_auto_route_enabled,
+            get_active_profession_slug,
+            get_profession,
+        )
+        if professions_auto_route_enabled():
+            active_prof_slug = get_active_profession_slug()
+            if active_prof_slug:
+                _prof = get_profession(active_prof_slug)
+                if _prof:
+                    active_prof_skills = {
+                        str(s).strip() for s in (_prof.get("skills") or []) if str(s).strip()
+                    }
+                    two_layer = True
+    except Exception:
+        two_layer = False
+        active_prof_slug = ""
+        active_prof_skills = set()
+
     cache_key = (
         str(skills_dir.resolve()),
         tuple(str(d) for d in external_dirs),
@@ -1091,6 +1128,13 @@ def build_skills_system_prompt(
         tuple(sorted(str(ts) for ts in (available_toolsets or set()))),
         _platform_hint,
         tuple(sorted(disabled)),
+        # Profession layer — empty/False when auto_route is off, so off-path
+        # keys stay stable. Active skill set is included so the index rebuilds
+        # when the profession's bindings change (slug alone is insufficient).
+        two_layer,
+        active_prof_slug,
+        tuple(sorted(active_prof_skills)),
+        tuple(sorted(borrowed_set)),
     )
     with _SKILLS_PROMPT_CACHE_LOCK:
         cached = _SKILLS_PROMPT_CACHE.get(cache_key)
@@ -1124,7 +1168,7 @@ def build_skills_system_prompt(
             ):
                 continue
             skills_by_category.setdefault(category, []).append(
-                (frontmatter_name, entry.get("description", ""))
+                (frontmatter_name, entry.get("description", ""), skill_name)
             )
         category_descriptions = {
             str(k): str(v)
@@ -1149,7 +1193,7 @@ def build_skills_system_prompt(
             ):
                 continue
             skills_by_category.setdefault(entry["category"], []).append(
-                (entry["frontmatter_name"], entry["description"])
+                (entry["frontmatter_name"], entry["description"], entry["skill_name"])
             )
 
         # Read category-level DESCRIPTION.md files
@@ -1179,7 +1223,7 @@ def build_skills_system_prompt(
     # precedence: we track seen names and skip duplicates from external dirs.
     seen_skill_names: set[str] = set()
     for cat_skills in skills_by_category.values():
-        for name, _desc in cat_skills:
+        for name, _desc, _sn in cat_skills:
             seen_skill_names.add(name)
 
     for ext_dir in external_dirs:
@@ -1205,7 +1249,7 @@ def build_skills_system_prompt(
                     continue
                 seen_skill_names.add(frontmatter_name)
                 skills_by_category.setdefault(entry["category"], []).append(
-                    (frontmatter_name, entry["description"])
+                    (frontmatter_name, entry["description"], skill_name)
                 )
             except Exception as e:
                 logger.debug("Error reading external skill %s: %s", skill_file, e)
@@ -1226,6 +1270,86 @@ def build_skills_system_prompt(
 
     if not skills_by_category:
         result = ""
+    elif two_layer:
+        # ── Profession two-layer index ────────────────────────────────
+        # Primary: the active profession's bound skills + ``_common/``
+        # infrastructure skills, in full detail. Borrowed: skills pulled in
+        # for this turn by the router, in their own section. Everything else
+        # collapses to a name-only index so the prompt stays lean.
+        primary_lines: list[str] = []
+        borrowed_lines: list[str] = []
+        other_names: list[str] = []
+        seen_other: set[str] = set()
+        for category in sorted(skills_by_category.keys()):
+            is_common = category == "_common" or category.startswith("_common/")
+            cat_primary: list[str] = []
+            seen = set()
+            for name, desc, sname in sorted(skills_by_category[category], key=lambda x: x[0]):
+                if name in seen:
+                    continue
+                seen.add(name)
+                in_active = name in active_prof_skills or sname in active_prof_skills
+                in_borrowed = (
+                    (name in borrowed_set or sname in borrowed_set) and not in_active
+                )
+                if is_common or in_active:
+                    cat_primary.append(f"    - {name}: {desc}" if desc else f"    - {name}")
+                elif in_borrowed:
+                    borrowed_lines.append(f"    - {name}: {desc}" if desc else f"    - {name}")
+                elif name not in seen_other:
+                    seen_other.add(name)
+                    other_names.append(name)
+            if cat_primary:
+                cat_desc = category_descriptions.get(category, "")
+                primary_lines.append(f"  {category}: {cat_desc}" if cat_desc else f"  {category}:")
+                primary_lines.extend(cat_primary)
+
+        sections: list[str] = []
+        if primary_lines:
+            sections.append(
+                "<available_skills>\n" + "\n".join(primary_lines) + "\n</available_skills>"
+            )
+        if borrowed_lines:
+            sections.append(
+                "<borrowed_skills>\n"
+                "  Temporarily borrowed from sibling professions for this task:\n"
+                + "\n".join(sorted(set(borrowed_lines)))
+                + "\n</borrowed_skills>"
+            )
+        if other_names:
+            other_idx = "\n".join(f"    - {n}" for n in sorted(set(other_names)))
+            sections.append(
+                "<other_skills_index>\n"
+                "  Not bound to the active profession — name only. Load with "
+                "skill_view(name) if relevant:\n"
+                + other_idx
+                + "\n</other_skills_index>"
+            )
+
+        if not sections:
+            result = ""
+        else:
+            result = (
+                "## Skills (mandatory)\n"
+                f"Active profession: {active_prof_slug}. The skills under <available_skills> are "
+                "your primary toolkit — scan them first. If a skill matches or is even partially "
+                "relevant to your task, you MUST load it with skill_view(name) and follow its "
+                "instructions. Err on the side of loading — it is always better to have context "
+                "you don't need than to miss critical steps, pitfalls, or established workflows. "
+                "Skills also encode the user's preferred approach, conventions, and quality "
+                "standards — load them even for tasks you already know how to do.\n"
+                "Whenever the user asks you to configure, set up, install, enable, disable, modify, "
+                "or troubleshoot Hermes Agent itself — its CLI, config, models, providers, tools, "
+                "skills, voice, gateway, plugins, or any feature — load the `hermes-agent` skill "
+                "first.\n"
+                "If a skill has issues, fix it with skill_manage(action='patch'). "
+                "After difficult/iterative tasks, offer to save as a skill.\n"
+                "\n"
+                + "\n\n".join(sections)
+                + "\n"
+                "\n"
+                "Only proceed without loading a skill if genuinely none are relevant to the task."
+            )
     else:
         index_lines = []
         for category in sorted(skills_by_category.keys()):
@@ -1236,7 +1360,7 @@ def build_skills_system_prompt(
                 index_lines.append(f"  {category}:")
             # Deduplicate and sort skills within each category
             seen = set()
-            for name, desc in sorted(skills_by_category[category], key=lambda x: x[0]):
+            for name, desc, _sn in sorted(skills_by_category[category], key=lambda x: x[0]):
                 if name in seen:
                     continue
                 seen.add(name)

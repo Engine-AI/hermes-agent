@@ -188,6 +188,7 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         skills_prompt = _r.build_skills_system_prompt(
             available_tools=agent.valid_tool_names,
             available_toolsets=avail_toolsets,
+            borrowed_skills=getattr(agent, "_active_borrowed_skills_names", ()),
         )
     else:
         skills_prompt = ""
@@ -310,6 +311,11 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
             user_block = agent._memory_store.format_for_system_prompt("user")
             if user_block:
                 volatile_parts.append(user_block)
+        # Active profession entry (PROFESSIONS.md) — only the selected profession.
+        if getattr(agent, "_profession_profile_enabled", False):
+            prof_block = agent._memory_store.format_active_profession_for_system_prompt()
+            if prof_block:
+                volatile_parts.append(prof_block)
 
     # External memory provider system prompt block (additive to built-in)
     if agent._memory_manager:

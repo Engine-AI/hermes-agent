@@ -14356,19 +14356,107 @@ Examples:
         help="Interactive skill configuration — enable/disable individual skills",
     )
 
+    # proposals sub-action: brain-proposed skill requests (see tools/skill_proposals_tool.py)
+    skills_proposals = skills_subparsers.add_parser(
+        "proposals",
+        help="Inspect brain-proposed skill requests (~/.hermes/skill-requests/)",
+        description="List, view, and triage skill-request proposals emitted by the brain.",
+    )
+    proposals_sub = skills_proposals.add_subparsers(dest="proposals_action")
+    proposals_list = proposals_sub.add_parser("list", help="List proposals (default: open)")
+    proposals_list.add_argument(
+        "--status",
+        default="open",
+        choices=["open", "accepted", "rejected", "fulfilled", "all"],
+        help="Filter by status",
+    )
+    proposals_show = proposals_sub.add_parser("show", help="Show one proposal")
+    proposals_show.add_argument("slug", help="Proposal slug")
+    proposals_accept = proposals_sub.add_parser("accept", help="Accept a proposal (move to accepted/)")
+    proposals_accept.add_argument("slug", help="Proposal slug")
+    proposals_reject = proposals_sub.add_parser("reject", help="Reject a proposal (move to rejected/)")
+    proposals_reject.add_argument("slug", help="Proposal slug")
+    proposals_fulfill = proposals_sub.add_parser("fulfill", help="Mark a proposal fulfilled")
+    proposals_fulfill.add_argument("slug", help="Proposal slug")
+    proposals_sub.add_parser("path", help="Print the skill-requests directory")
+
     def cmd_skills(args):
+        action = getattr(args, "skills_action", None)
         # Route 'config' action to skills_config module
-        if getattr(args, "skills_action", None) == "config":
+        if action == "config":
             _require_tty("skills config")
             from hermes_cli.skills_config import skills_command as skills_config_command
 
             skills_config_command(args)
+        elif action == "proposals":
+            from hermes_cli.skill_proposals import proposals_command
+
+            proposals_command(args)
         else:
             from hermes_cli.skills_hub import skills_command
 
             skills_command(args)
 
     skills_parser.set_defaults(func=cmd_skills)
+
+    # =========================================================================
+    # professions command — inspect/manage PROFESSIONS.md
+    # =========================================================================
+    professions_parser = subparsers.add_parser(
+        "professions",
+        help="Inspect and rebuild profession definitions from PROFESSIONS.md",
+        description="Manage profession definitions stored in ~/.hermes/memories/PROFESSIONS.md.",
+    )
+    professions_sub = professions_parser.add_subparsers(dest="professions_action")
+    professions_sub.add_parser("list", help="List professions as a simple leaderboard")
+    prof_show = professions_sub.add_parser("show", help="Show one profession")
+    prof_show.add_argument("name", help="Profession name or slug")
+    prof_use = professions_sub.add_parser("use", help="Set the active profession")
+    prof_use.add_argument("name", help="Profession name or slug")
+    prof_rate = professions_sub.add_parser("rate", help="Rate a profession")
+    prof_rate.add_argument("name", help="Profession name or slug")
+    prof_rate.add_argument("stars", type=int, help="Star rating 1-5")
+    prof_rate.add_argument("--review", default="", help="Optional review text")
+    prof_feedback = professions_sub.add_parser("feedback", help="Record profession feedback")
+    prof_feedback.add_argument("name", help="Profession name or slug")
+    prof_feedback.add_argument("sentiment", choices=["positive", "negative"], help="Feedback sentiment")
+    prof_feedback.add_argument("text", help="Feedback text")
+    prof_solve = professions_sub.add_parser("solve", help="Record a solved problem for a profession")
+    prof_solve.add_argument("name", help="Profession name or slug")
+    prof_solve.add_argument("--problem", required=True, help="Problem that was solved")
+    prof_solve.add_argument("--user", default="", help="Optional user identifier or name")
+    prof_solve.add_argument("--summary", default="", help="Optional short solution summary shown in recent history")
+    prof_solve.add_argument(
+        "--no-user-count",
+        action="store_true",
+        help="Do not increment the users-helped counter for this record",
+    )
+    prof_bind = professions_sub.add_parser("bind", help="Manually bind a skill to a profession")
+    prof_bind.add_argument("name", help="Profession name or slug")
+    prof_bind.add_argument("skill", help="Skill name")
+    prof_unbind = professions_sub.add_parser("unbind", help="Manually unbind a skill from a profession")
+    prof_unbind.add_argument("name", help="Profession name or slug")
+    prof_unbind.add_argument("skill", help="Skill name")
+    professions_sub.add_parser("rebuild", help="Rebuild PROFESSIONS.md from installed skills")
+    professions_sub.add_parser("path", help="Print the PROFESSIONS.md path")
+    prof_auto = professions_sub.add_parser(
+        "auto",
+        help="Toggle automatic profession routing (first-turn + drift)",
+    )
+    prof_auto.add_argument(
+        "state",
+        nargs="?",
+        choices=["on", "off", "status"],
+        default="status",
+        help="Turn auto-routing on/off or print current status",
+    )
+
+    def cmd_professions(args):
+        from hermes_cli.professions import professions_command
+
+        professions_command(args)
+
+    professions_parser.set_defaults(func=cmd_professions)
 
     # =========================================================================
     # bundles command — skill bundles (alias /<name> for multiple skills)

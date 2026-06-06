@@ -1060,10 +1060,14 @@ def init_agent(
     # broad pseudo-public config object on the agent instance.
     agent._aux_compression_context_length_config = None
 
-    # Persistent memory (MEMORY.md + USER.md) -- loaded from disk
+    # Persistent memory (MEMORY.md + USER.md + PROFESSIONS.md) -- loaded from disk
     agent._memory_store = None
     agent._memory_enabled = False
     agent._user_profile_enabled = False
+    agent._profession_profile_enabled = False
+    # Skills borrowed from a sibling profession for the current turn (set by the
+    # brain router in the conversation loop). Drives the two-layer skills index.
+    agent._active_borrowed_skills_names: tuple = ()
     agent._memory_nudge_interval = 10
     agent._turns_since_memory = 0
     agent._iters_since_skill = 0
@@ -1072,12 +1076,14 @@ def init_agent(
             mem_config = _agent_cfg.get("memory", {})
             agent._memory_enabled = mem_config.get("memory_enabled", False)
             agent._user_profile_enabled = mem_config.get("user_profile_enabled", False)
+            agent._profession_profile_enabled = mem_config.get("profession_profile_enabled", False)
             agent._memory_nudge_interval = int(mem_config.get("nudge_interval", 10))
-            if agent._memory_enabled or agent._user_profile_enabled:
+            if agent._memory_enabled or agent._user_profile_enabled or agent._profession_profile_enabled:
                 from tools.memory_tool import MemoryStore
                 agent._memory_store = MemoryStore(
                     memory_char_limit=mem_config.get("memory_char_limit", 2200),
                     user_char_limit=mem_config.get("user_char_limit", 1375),
+                    profession_char_limit=mem_config.get("profession_char_limit", 5000),
                 )
                 agent._memory_store.load_from_disk()
         except Exception:

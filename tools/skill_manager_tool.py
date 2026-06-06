@@ -473,6 +473,42 @@ def _atomic_write_text(file_path: Path, content: str, encoding: str = "utf-8") -
 # Core actions
 # =============================================================================
 
+def _bind_skill_to_professions(skill_dir: Path, name: str, result: Dict[str, Any]) -> None:
+    """Bind a created/edited skill to matching professions (best-effort).
+
+    Gated by ``professions.auto_route`` so it stays passive — and never writes
+    PROFESSIONS.md — for users who haven't enabled the profession brain.
+    Mutates ``result`` in place with ``bound_professions`` /
+    ``cross_bound_professions`` when bindings occur.
+    """
+    try:
+        from tools.professions_tool import (
+            professions_auto_route_enabled,
+            bind_skill_to_professions,
+            check_cross_profession_binding,
+        )
+        if not professions_auto_route_enabled():
+            return
+    except Exception:
+        return
+    try:
+        bound = bind_skill_to_professions(skill_dir)
+        if bound:
+            result["bound_professions"] = bound
+    except Exception as e:
+        logger.warning("Failed to bind professions for skill '%s': %s", name, e)
+    try:
+        cross_bound = check_cross_profession_binding(skill_dir)
+        if cross_bound:
+            result.setdefault("bound_professions", [])
+            result["bound_professions"] = sorted(
+                dict.fromkeys(list(result["bound_professions"]) + cross_bound)
+            )
+            result["cross_bound_professions"] = cross_bound
+    except Exception as e:
+        logger.debug("Cross-profession binding skipped for skill '%s': %s", name, e)
+
+
 def _create_skill(name: str, content: str, category: str = None) -> Dict[str, Any]:
     """Create a new user skill with SKILL.md content."""
     # Validate name
@@ -523,6 +559,7 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
     }
     if category:
         result["category"] = category
+    _bind_skill_to_professions(skill_dir, name, result)
     result["hint"] = (
         "To add reference files, templates, or scripts, use "
         "skill_manage(action='write_file', name='{}', file_path='references/example.md', file_content='...')".format(name)
@@ -556,11 +593,13 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
             _atomic_write_text(skill_md, original_content)
         return {"success": False, "error": scan_error}
 
-    return {
+    result = {
         "success": True,
         "message": f"Skill '{name}' updated.",
         "path": str(existing["path"]),
     }
+    _bind_skill_to_professions(existing["path"], name, result)
+    return result
 
 
 def _patch_skill(

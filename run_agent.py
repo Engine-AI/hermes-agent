@@ -632,6 +632,8 @@ class AIAgent:
         
         # Turn counter (added after reset_session_state was first written — #2635)
         self._user_turn_count = 0
+        # Brain-router borrowed-skills state resets with the session.
+        self._active_borrowed_skills_names = ()
 
         # Context engine reset/transition (works for built-in compressor and plugins)
         self._transition_context_engine_session(
